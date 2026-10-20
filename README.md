@@ -5,7 +5,7 @@
 ### Gestão e distribuição de hemocomponentes na rede de sangue
 **Projeto Integrador · Unidade 2** — CESAR School
 
-📄 **Documentação completa (PDF):** [`docs/Rota_Vital_U2.pdf`](docs/Rota_Vital_U2.pdf)
+📄 **Documentação completa (PDF):** [`docs/Rota_Vital_U2.pdf`](https://github.com/egs3-coder/AED/blob/main/Rota_Vital_U2.pdf)
 
 </div>
 
