@@ -36,10 +36,10 @@
 
 <table>
 <tr>
-<td align="center"><img src="docs/equipe/ewerton.png" width="100"><br><b>Ewerton Guilherme da Silva</b><br><sub>Product Owner</sub></td>
-<td align="center"><img src="docs/equipe/pablo.png" width="100"><br><b>Pablo Arthur Eustáquio de Lima</b><br><sub>Backend Developer</sub></td>
-<td align="center"><img src="docs/equipe/joao.png" width="100"><br><b>João Ricardo Alves de Brito</b><br><sub>Backend Developer</sub></td>
-<td align="center"><img src="docs/equipe/lucas.png" width="100"><br><b>Lucas Aprigio dos Santos</b><br><sub>Backend Developer</sub></td>
+<td align="center"><br><b>Ewerton Guilherme da Silva</b><br><sub>Product Owner</sub></td>
+<td align="center"><<br><b>Pablo Arthur Eustáquio de Lima</b><br><sub>Backend Developer</sub></td>
+<td align="center"><br><b>João Ricardo Alves de Brito</b><br><sub>Backend Developer</sub></td>
+<td align="center"><br><b>Lucas Aprigio dos Santos</b><br><sub>Backend Developer</sub></td>
 </tr>
 <tr>
 <td align="center"><img src="docs/equipe/saulo.png" width="100"><br><b>Saulo Eduardo Almeida dos Santos</b><br><sub>Backend Developer</sub></td>
