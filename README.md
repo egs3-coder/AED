@@ -5,11 +5,6 @@
 ### Gestão e distribuição de hemocomponentes na rede de sangue
 **Projeto Integrador · Unidade 2** — CESAR School
 
-![C++](https://img.shields.io/badge/C%2B%2B-17-3A3632?style=for-the-badge&logo=cplusplus&logoColor=white)
-![Java](https://img.shields.io/badge/Java-11%2B-F26A1B?style=for-the-badge&logo=openjdk&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-32%2F32-1A1A1A?style=for-the-badge)
-![Dados](https://img.shields.io/badge/dados-100%25%20sint%C3%A9ticos-F2B233?style=for-the-badge)
-
 📄 **Documentação completa (PDF):** [`docs/Rota_Vital_U2.pdf`](docs/Rota_Vital_U2.pdf)
 
 </div>
@@ -37,14 +32,14 @@
 <table>
 <tr>
 <td align="center"><br><b>Ewerton Guilherme da Silva</b><br><sub>Product Owner</sub></td>
-<td align="center"><<br><b>Pablo Arthur Eustáquio de Lima</b><br><sub>Backend Developer</sub></td>
+<td align="center"><br><b>Pablo Arthur Eustáquio de Lima</b><br><sub>Backend Developer</sub></td>
 <td align="center"><br><b>João Ricardo Alves de Brito</b><br><sub>Backend Developer</sub></td>
 <td align="center"><br><b>Lucas Aprigio dos Santos</b><br><sub>Backend Developer</sub></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/equipe/saulo.png" width="100"><br><b>Saulo Eduardo Almeida dos Santos</b><br><sub>Backend Developer</sub></td>
-<td align="center"><img src="docs/equipe/thiago.png" width="100"><br><b>Thiago Cardozo da Conceição</b><br><sub>Frontend / UI Designer</sub></td>
-<td align="center"><img src="docs/equipe/eloi.png" width="100"><br><b>Eloi de Lima Sousa</b><br><sub>Frontend / UI Designer</sub></td>
+<td align="center"><br><b>Saulo Eduardo Almeida dos Santos</b><br><sub>Backend Developer</sub></td>
+<td align="center"><br><b>Thiago Cardozo da Conceição</b><br><sub>Frontend / UI Designer</sub></td>
+<td align="center"><br><b>Eloi de Lima Sousa</b><br><sub>Frontend / UI Designer</sub></td>
 <td></td>
 </tr>
 </table>
