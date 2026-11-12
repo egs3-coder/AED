@@ -8,11 +8,16 @@
  *    1. Compatibilidade ABO/Rh ...... matriz 8x8 [doador][receptor]      O(1)
  *    2. Priorização FEFO ............ lista encadeada com inserção
  *                                     ordenada por validade               O(m)
- *    3. Índice de estoque por hash .. (a) encadeamento externo:
+ *    3. Índice de estoque por hash .. (a) encadeamento externo (11 slots):
  *                                         chave (componente,tipo) -> lista FEFO
  *                                     (b) sondagem linear: id -> bolsa
- *    4. Roteirização ................ Floyd-Warshall (caminhos mínimos)
- *                                     + heurística do vizinho mais próximo
+ *    4. Roteirização ................ vizinho mais próximo andando pela
+ *                                     malha (com retrocesso)              O(V^2)
+ *
+ *  É a versão C/C++ dos mesmos algoritmos usados no sistema HemoTrack
+ *  (Spring Boot, pacote br.com.hemotrack.algoritmo): mesma matriz, mesma
+ *  chave de hash (componente*8 + tipo, % 11), mesma regra de alocação
+ *  (compatível que vence primeiro, tudo ou nada) e mesma rota.
  *
  *    Apoio: fila FIFO de pedidos (aula 03), ordenações bubble/selection/
  *    insertion/shell/quick/merge (aulas 07-08), busca sequencial e binária
@@ -55,9 +60,10 @@ const int N_TIPOS = 8;
 enum Tipo { O_NEG, O_POS, A_NEG, A_POS, B_NEG, B_POS, AB_NEG, AB_POS };
 const char* NOME_TIPO[N_TIPOS] = {"O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"};
 
-const int N_COMP = 3;
-enum Componente { CH, PFC, PLQ };   // concentrado de hemácias, plasma, plaquetas
-const char* NOME_COMP[N_COMP] = {"CH", "PFC", "PLQ"};
+// Mesma ordem do enum Hemocomponente do HemoTrack: CH=0, PLQ=1, PFC=2, CRIO=3
+const int N_COMP = 4;
+enum Componente { CH, PLQ, PFC, CRIO };   // hemácias, plaquetas, plasma, crioprecipitado
+const char* NOME_COMP[N_COMP] = {"CH", "PLQ", "PFC", "CRIO"};
 
 // Hemácias (e, didaticamente, plaquetas): o DOADOR não pode levar antígeno
 // (A, B ou D/Rh) que o RECEPTOR não tenha. O- = doador universal.
@@ -73,8 +79,8 @@ const int COMPAT_HEMACIAS[N_TIPOS][N_TIPOS] = {
     /* doador AB+ */      { 0,  0,  0,  0,  0,  0,  0,  1 },
 };
 
-// Plasma: lógica INVERTIDA (o plasma leva anticorpos). AB = doador universal
-// de plasma; o Rh não é considerado para plasma.
+// Plasma (e crioprecipitado, que vem do plasma): lógica INVERTIDA (leva
+// anticorpos). AB = doador universal de plasma; o Rh não é considerado.
 const int COMPAT_PLASMA[N_TIPOS][N_TIPOS] = {
     //            receptor: O-  O+  A-  A+  B-  B+ AB- AB+
     /* doador O-  */      { 1,  1,  0,  0,  0,  0,  0,  0 },
@@ -89,8 +95,17 @@ const int COMPAT_PLASMA[N_TIPOS][N_TIPOS] = {
 
 // O(1): dois índices de array, sem laço.
 bool compativel(Componente comp, Tipo doador, Tipo receptor) {
-    if (comp == PFC) return COMPAT_PLASMA[doador][receptor] == 1;
+    if (comp == PFC || comp == CRIO) return COMPAT_PLASMA[doador][receptor] == 1;
     return COMPAT_HEMACIAS[doador][receptor] == 1;
+}
+
+// Doadores aceitos pelo receptor = COLUNA do receptor na matriz (8 linhas).
+// O(8) = O(1). Preenche saida[] na ordem O-, O+, A-, ... e devolve quantos.
+int doadoresCompativeis(Componente comp, Tipo receptor, Tipo saida[]) {
+    int n = 0;
+    for (int doador = 0; doador < N_TIPOS; doador++)
+        if (compativel(comp, (Tipo)doador, receptor)) saida[n++] = (Tipo)doador;
+    return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,10 +167,12 @@ NoBolsa* fefoRemoverPrimeiro(NoBolsa* head, Bolsa* removida) {
 
 // ---------------------------------------------------------------------------
 // 4a. HASH DO ESTOQUE com ENCADEAMENTO (aula 06)
-//     chave = componente * 8 + tipo  (24 chaves possíveis)
+//     chave = componente * 8 + tipo  (4 x 8 = 32 chaves possíveis: 0..31)
+//     h(chave) = chave % 11; colisões: encadeamento separado
 //     cada entrada guarda a lista FEFO daquela combinação
+//     Ex.: CH O- (chave 0) e PLQ A+ (chave 11) caem no slot 0.
 // ---------------------------------------------------------------------------
-const int TAM_HASH = 7;   // primo pequeno de propósito: força colisões visíveis
+const int TAM_HASH = 11;  // primo (o mesmo do HemoTrack)
 
 struct EntradaEstoque {
     int chave;
@@ -177,7 +194,7 @@ void hashInicializar(HashEstoque* h) {
 int chaveEstoque(Componente c, Tipo t) { return (int)c * N_TIPOS + (int)t; }
 int funcaoHash(int chave) { return chave % TAM_HASH; }
 
-// O(1 + alfa), alfa = fator de carga (no máx. 24/7 ~ 3,4 -> constante)
+// O(1 + alfa), alfa = fator de carga (no máx. 32/11 ~ 2,9 -> constante)
 EntradaEstoque* hashBuscar(HashEstoque* h, int chave) {
     EntradaEstoque* atual = h->slots[funcaoHash(chave)];
     while (atual != NULL) {
@@ -396,8 +413,11 @@ bool dequeue(FilaPedidos* f, Pedido* saida) {       // O(1): remove do início
 
 // ---------------------------------------------------------------------------
 // 7. ALOCAÇÃO = matriz ABO/Rh + hash + FEFO trabalhando juntos
-//    Regra: 1º tipo idêntico (FEFO); se faltar, entre os tipos compatíveis
-//    pega a bolsa que vence primeiro (comparando só as CABEÇAS das listas).
+//    Regra (a mesma da US04 do HemoTrack): entre TODOS os tipos compatíveis
+//    sai primeiro a bolsa que vence primeiro. Cada lista já está em ordem
+//    FEFO, então basta comparar as CABEÇAS (no máx. 8), como na intercalação
+//    do Merge Sort. TUDO OU NADA: se não há bolsas compatíveis suficientes,
+//    nenhuma sai do estoque e o pedido fica pendente.
 // ---------------------------------------------------------------------------
 const int MAX_POR_PEDIDO = 10;
 
@@ -405,49 +425,51 @@ struct Alocacao {
     Pedido pedido;
     Bolsa bolsas[MAX_POR_PEDIDO];
     int qtd;
+    int disponiveis;        // bolsas compatíveis e dentro da validade encontradas
 };
 
 int alocar(Estoque* e, Pedido p, int hoje, Alocacao* out) {
     out->pedido = p;
     out->qtd = 0;
-    EntradaEstoque* candidatas[N_TIPOS];
-    int nc = 0;
-    EntradaEstoque* identica = NULL;
+    out->disponiveis = 0;
+    if (p.quantidade < 1 || p.quantidade > MAX_POR_PEDIDO) return 0;
 
-    // (a) 8 consultas O(1) na matriz + 8 consultas O(1) no hash
-    for (int t = 0; t < N_TIPOS; t++) {
-        if (!compativel(p.comp, (Tipo)t, p.receptor)) continue;
-        EntradaEstoque* en = hashBuscar(&e->porTipo, chaveEstoque(p.comp, (Tipo)t));
+    // (a) coluna da matriz: doadores aceitos (8 consultas O(1))
+    Tipo doadores[N_TIPOS];
+    int nd = doadoresCompativeis(p.comp, p.receptor, doadores);
+
+    // (b) uma busca O(1) no hash por doador; descarta as vencidas do início
+    EntradaEstoque* listas[N_TIPOS];
+    int nl = 0;
+    for (int i = 0; i < nd; i++) {
+        EntradaEstoque* en = hashBuscar(&e->porTipo, chaveEstoque(p.comp, doadores[i]));
         if (en == NULL) continue;
         estoqueDescartarVencidas(e, en, hoje);      // vencidas nunca saem
-        candidatas[nc++] = en;
-        if (t == (int)p.receptor) identica = en;
-    }
-
-    // (b) cada bolsa: compara no máx. 8 cabeças de lista -> O(1) por bolsa
-    while (out->qtd < p.quantidade && out->qtd < MAX_POR_PEDIDO) {
-        EntradaEstoque* escolhida = NULL;
-        if (identica != NULL && identica->fefo != NULL) {
-            escolhida = identica;
-        } else {
-            for (int i = 0; i < nc; i++) {
-                if (candidatas[i]->fefo == NULL) continue;
-                if (escolhida == NULL ||
-                    vemAntes(candidatas[i]->fefo->bolsa, escolhida->fefo->bolsa))
-                    escolhida = candidatas[i];
-            }
+        if (en->fefo != NULL) {
+            listas[nl++] = en;
+            out->disponiveis += en->quantidade;
         }
-        if (escolhida == NULL) break;               // sem estoque compatível
-        out->bolsas[out->qtd++] = estoqueRetirar(e, escolhida);
+    }
+    if (out->disponiveis < p.quantidade) return 0;  // tudo ou nada
+
+    // (c) q vezes: compara as cabeças (no máx. 8) e retira a que vence antes
+    while (out->qtd < p.quantidade) {
+        EntradaEstoque* melhor = NULL;
+        for (int i = 0; i < nl; i++) {
+            if (listas[i]->fefo == NULL) continue;
+            if (melhor == NULL || vemAntes(listas[i]->fefo->bolsa, melhor->fefo->bolsa))
+                melhor = listas[i];
+        }
+        out->bolsas[out->qtd++] = estoqueRetirar(e, melhor);
     }
     return out->qtd;
 }
 
 // ---------------------------------------------------------------------------
-// 8. GRAFO + CAMINHOS MÍNIMOS (Floyd-Warshall) + VIZINHO MAIS PRÓXIMO
+// 8. GRAFO (matriz de adjacência) + ROTA POR VIZINHO MAIS PRÓXIMO
 // ---------------------------------------------------------------------------
 const int V = 6;
-const int INF = 1000000;
+const int INF = 1000000;   // "sem estrada direta"
 const char* NOME_LOCAL[V] = {
     "Hemocentro Central", "Hospital Alfa", "Hospital Beta",
     "Hospital Gama", "Hospital Delta", "Hospital Epsilon"
@@ -464,62 +486,45 @@ const int ESTRADAS[V][V] = {
     { INF, INF, INF,  20,  16,   0 },   // 5 Hospital Epsilon
 };
 
-struct Grafo {
-    int dist[V][V];
-    int prox[V][V];     // próximo vértice no caminho mínimo (reconstrução)
-};
-
-// O(V^3): três laços aninhados de V. Com V = 6 -> 216 relaxamentos.
-void floydWarshall(Grafo* g) {
-    for (int i = 0; i < V; i++)
-        for (int j = 0; j < V; j++) {
-            g->dist[i][j] = ESTRADAS[i][j];
-            g->prox[i][j] = (ESTRADAS[i][j] < INF) ? j : -1;
-        }
-    for (int k = 0; k < V; k++)
-        for (int i = 0; i < V; i++)
-            for (int j = 0; j < V; j++)
-                if (g->dist[i][k] + g->dist[k][j] < g->dist[i][j]) {
-                    g->dist[i][j] = g->dist[i][k] + g->dist[k][j];
-                    g->prox[i][j] = g->prox[i][k];
-                }
-}
-
-void imprimirCaminho(const Grafo* g, int u, int v) {
-    if (g->prox[u][v] == -1) { printf("(sem caminho)"); return; }
-    printf("%s", NOME_LOCAL[u]);
-    while (u != v) {
-        u = g->prox[u][v];
-        printf(" -> %s", NOME_LOCAL[u]);
-    }
-}
-
 const int LIMITE_CADEIA_FRIA_MIN = 120;   // caixa térmica validada (sintético)
 
-struct Parada {
-    int local;
-    int pedidoId;
-    int janelaMin;
-    int chegadaMin;
-};
-
-// Vizinho mais próximo: a cada passo escolhe, entre as paradas restantes, a
-// mais perto da posição atual (mesma estrutura do Selection Sort!).
-// O(k^2) com k paradas. Retorna o tempo total incluindo a volta à base.
-int rotaVizinhoMaisProximo(const Grafo* g, int origem, Parada paradas[], int k) {
-    int atual = origem;
-    int tempo = 0;
-    for (int pos = 0; pos < k; pos++) {
-        int melhor = pos;
-        for (int i = pos + 1; i < k; i++)
-            if (g->dist[atual][paradas[i].local] < g->dist[atual][paradas[melhor].local])
-                melhor = i;
-        std::swap(paradas[pos], paradas[melhor]);
-        tempo += g->dist[atual][paradas[pos].local];
-        paradas[pos].chegadaMin = tempo;
-        atual = paradas[pos].local;
+// Vizinho mais próximo (a mesma rota da US05 do HemoTrack): partindo da
+// origem, vai sempre para o vizinho AINDA NÃO VISITADO com a estrada mais
+// curta. Se cair num beco sem saída, volta um ponto (desempilha) e tenta o
+// próximo vizinho. caminho[] funciona como PILHA.
+// O(V^2): cada vértice entra na pilha no máximo 1 vez (visitado[]) e cada
+// volta do while varre uma linha da matriz (V colunas).
+// Retorna o tempo total e preenche caminho[0..*tamanho-1]; -1 se não há ligação.
+// É guloso: olha só o próximo passo, então pode não achar o menor tempo.
+int rotaVizinhoMaisProximo(const int adj[V][V], int origem, int destino,
+                           int caminho[], int* tamanho) {
+    bool visitado[V];
+    for (int i = 0; i < V; i++) visitado[i] = false;
+    int topo = 0;
+    caminho[topo++] = origem;
+    visitado[origem] = true;
+    while (topo > 0) {
+        int atual = caminho[topo - 1];
+        if (atual == destino) break;
+        int vizinho = -1;
+        for (int v = 0; v < V; v++)
+            if (!visitado[v] && adj[atual][v] < INF &&
+                (vizinho == -1 || adj[atual][v] < adj[atual][vizinho]))
+                vizinho = v;
+        if (vizinho == -1) topo--;                 // beco sem saída: volta
+        else { visitado[vizinho] = true; caminho[topo++] = vizinho; }
     }
-    return tempo + g->dist[atual][origem];
+    *tamanho = topo;
+    if (topo == 0) return -1;                      // pilha vazia: sem ligação
+    int tempo = 0;
+    for (int i = 1; i < topo; i++) tempo += adj[caminho[i - 1]][caminho[i]];
+    return tempo;
+}
+
+void imprimirCaminho(const int caminho[], int tamanho) {
+    if (tamanho == 0) { printf("(sem caminho)"); return; }
+    printf("%s", NOME_LOCAL[caminho[0]]);
+    for (int i = 1; i < tamanho; i++) printf(" -> %s", NOME_LOCAL[caminho[i]]);
 }
 
 // ---------------------------------------------------------------------------
@@ -676,12 +681,32 @@ int executarTestes() {
     }
     verificar(doadoresONeg == 1, "CH: receptor O- so recebe de O- (1 doador)");
     verificar(doadoresABPos == 8, "CH: receptor AB+ recebe de todos (8 doadores)");
+    Tipo col[N_TIPOS];
+    int nCol = doadoresCompativeis(CH, B_POS, col);
+    verificar(nCol == 4 && col[0] == O_NEG && col[1] == O_POS && col[2] == B_NEG && col[3] == B_POS,
+              "CH: coluna B+ da matriz = O-, O+, B-, B+");
+    // Gabarito independente: regra dos antigenos (A, B, Rh) nas 64 combinacoes
+    bool confere = true;
+    int pares = 0;
+    for (int d = 0; d < N_TIPOS; d++)
+        for (int r = 0; r < N_TIPOS; r++) {
+            bool dA = (d == A_NEG || d == A_POS || d == AB_NEG || d == AB_POS);
+            bool dB = (d == B_NEG || d == B_POS || d == AB_NEG || d == AB_POS);
+            bool rA = (r == A_NEG || r == A_POS || r == AB_NEG || r == AB_POS);
+            bool rB = (r == B_NEG || r == B_POS || r == AB_NEG || r == AB_POS);
+            bool esperado = (!dA || rA) && (!dB || rB) && (d % 2 == 0 || r % 2 == 1);
+            if (esperado != compativel(CH, (Tipo)d, (Tipo)r)) confere = false;
+            if (esperado) pares++;
+        }
+    verificar(confere && pares == 27, "CH: matriz confere com a regra de antigenos (64 pares, 27 compativeis)");
 
     printf("-- Compatibilidade de plasma (PFC) --\n");
     verificar(compativel(PFC, AB_POS, O_NEG), "PFC: AB+ doa para O- (plasma universal)");
     verificar(compativel(PFC, A_NEG, O_POS), "PFC: A- doa para O+");
     verificar(!compativel(PFC, O_POS, A_POS), "PFC: O+ NAO doa para A+ (anti-A)");
     verificar(!compativel(PFC, B_POS, AB_NEG), "PFC: B+ NAO doa para AB- (anti-A)");
+    verificar(compativel(CRIO, AB_NEG, O_POS) && !compativel(CRIO, O_NEG, A_POS),
+              "CRIO: segue a regra do plasma");
 
     printf("-- Lista FEFO (insercao ordenada) --\n");
     NoBolsa* lista = NULL;
@@ -708,6 +733,12 @@ int executarTestes() {
               "Hash: [CH O-] tem 2 bolsas e a cabeca e a 11 (vence antes)");
     verificar(hashBuscar(&est.porTipo, chaveEstoque(PLQ, O_POS)) == NULL,
               "Hash: chave inexistente retorna NULL");
+    estoqueReceber(&est, novaBolsa(15, A_POS, PLQ, 400));   // chave 1*8+3 = 11
+    EntradaEstoque* chONeg = hashBuscar(&est.porTipo, chaveEstoque(CH, O_NEG));
+    EntradaEstoque* plqAPos = hashBuscar(&est.porTipo, chaveEstoque(PLQ, A_POS));
+    verificar(funcaoHash(chaveEstoque(CH, O_NEG)) == 0 && funcaoHash(chaveEstoque(PLQ, A_POS)) == 0 &&
+              chONeg != NULL && plqAPos != NULL && plqAPos->fefo->bolsa.id == 15,
+              "Hash: CH O- (chave 0) e PLQ A+ (chave 11) colidem no slot 0 e ambas sao achadas");
     verificar(indiceBuscar(&est.porId, 12) != -1, "Indice: bolsa 12 encontrada por id");
     verificar(indiceBuscar(&est.porId, 99) == -1, "Indice: bolsa 99 inexistente");
 
@@ -715,25 +746,29 @@ int executarTestes() {
     Alocacao a;
     Pedido p1 = {1, 1, A_POS, CH, 1, 60};
     alocar(&est, p1, 292, &a);
-    verificar(a.qtd == 1 && a.bolsas[0].id == 12, "Alocacao: A+ recebe primeiro o tipo identico (12)");
+    verificar(a.qtd == 1 && a.bolsas[0].id == 11,
+              "Alocacao: A+ recebe a compativel que vence antes (O- 11, nao a A+ 12)");
     Pedido p2 = {2, 1, A_POS, CH, 1, 60};
     alocar(&est, p2, 292, &a);
-    verificar(a.qtd == 1 && a.bolsas[0].id == 11, "Alocacao: sem A+, usa O- compativel que vence antes (11)");
+    verificar(a.qtd == 1 && a.bolsas[0].id == 12, "Alocacao: depois, A+ 12 (vence antes de O- 10)");
     verificar(indiceBuscar(&est.porId, 11) == -1, "Alocacao: bolsa alocada sai do indice por id");
     Pedido p3 = {3, 1, B_NEG, CH, 3, 60};
     alocar(&est, p3, 292, &a);
-    verificar(a.qtd == 1 && a.bolsas[0].id == 10 && est.descartadas == 1,
-              "Alocacao: B- descarta a vencida (13) e atende parcial com O- (10)");
+    verificar(a.qtd == 0 && a.disponiveis == 1 && est.descartadas == 1 && indiceBuscar(&est.porId, 10) != -1,
+              "Alocacao: B- descarta a vencida (13); 1 compativel para 3 pedidas -> nada sai (tudo ou nada)");
+    Pedido p3b = {7, 1, B_NEG, CH, 1, 60};
+    alocar(&est, p3b, 292, &a);
+    verificar(a.qtd == 1 && a.bolsas[0].id == 10, "Alocacao: B- x1 recebe O- (10)");
     bool todasCompat = true;
     for (int i = 0; i < a.qtd; i++)
-        if (!compativel(a.bolsas[i].comp, a.bolsas[i].tipo, p3.receptor)) todasCompat = false;
+        if (!compativel(a.bolsas[i].comp, a.bolsas[i].tipo, p3b.receptor)) todasCompat = false;
     verificar(todasCompat, "Alocacao: nenhuma bolsa incompativel foi entregue");
     Pedido p4 = {4, 1, O_NEG, PFC, 1, 60};
     alocar(&est, p4, 292, &a);
     verificar(a.qtd == 1 && a.bolsas[0].tipo == AB_POS, "Alocacao: plasma O- aceita AB+ (regra invertida)");
-    Pedido p5 = {5, 1, AB_POS, PLQ, 1, 60};
+    Pedido p5 = {5, 1, O_NEG, PLQ, 1, 60};
     alocar(&est, p5, 292, &a);
-    verificar(a.qtd == 0, "Alocacao: sem estoque compativel -> 0 bolsas");
+    verificar(a.qtd == 0, "Alocacao: sem estoque compativel -> 0 bolsas (PLQ A+ nao serve para O-)");
     estoqueLiberar(&est);
 
     printf("-- Ordenacoes e buscas --\n");
@@ -760,15 +795,23 @@ int executarTestes() {
     verificar(it == 5 && rc == 5 && seq == 5, "Busca binaria iterativa = recursiva = contagem sequencial (5)");
     verificar(buscaSequencialPorId(base, 8, 7) == 6, "Busca sequencial: id 7 na posicao 6");
 
-    printf("-- Grafo e rota --\n");
-    static Grafo g;
-    floydWarshall(&g);
-    verificar(g.dist[0][5] == 60, "Floyd: Hemocentro -> Epsilon = 60 min (via Gama)");
-    verificar(g.dist[1][3] == 30, "Floyd: Alfa -> Gama = 30 min (via Beta)");
-    Parada pr[2] = {{3, 1, 999, 0}, {1, 2, 999, 0}};
-    int total = rotaVizinhoMaisProximo(&g, 0, pr, 2);
-    verificar(pr[0].local == 1 && pr[1].local == 3 && total == 85,
-              "Vizinho mais proximo: visita Alfa e depois Gama, total 85 min");
+    printf("-- Grafo e rota (vizinho mais proximo) --\n");
+    int cam[V], tam = 0;
+    int t3 = rotaVizinhoMaisProximo(ESTRADAS, 0, 3, cam, &tam);
+    verificar(t3 == 45 && tam == 4 && cam[1] == 1 && cam[2] == 2 && cam[3] == 3,
+              "Vizinho: Hemocentro -> Alfa -> Beta -> Gama = 45 min");
+    int t4 = rotaVizinhoMaisProximo(ESTRADAS, 0, 4, cam, &tam);
+    verificar(t4 == 81 && tam == 6,
+              "Vizinho e guloso: ate Delta da 81 min (via Alfa direto seriam 45)");
+    static int beco[V][V];
+    for (int i = 0; i < V; i++) for (int j = 0; j < V; j++) beco[i][j] = (i == j) ? 0 : INF;
+    beco[0][1] = beco[1][0] = 2;     // 1 e beco sem saida
+    beco[0][2] = beco[2][0] = 6;
+    beco[2][3] = beco[3][2] = 4;
+    int tb = rotaVizinhoMaisProximo(beco, 0, 3, cam, &tam);
+    verificar(tb == 10 && tam == 3 && cam[1] == 2,
+              "Vizinho: beco sem saida em 1 -> volta e vai por 2 (10 min)");
+    verificar(rotaVizinhoMaisProximo(beco, 0, 4, cam, &tam) == -1, "Vizinho: destino sem ligacao -> -1");
 
     g_verboso = true;
     printf("Resultado: %d OK, %d falha(s)\n\n", g_ok, g_falhas);
@@ -838,41 +881,35 @@ int main() {
                    data(a->bolsas[i].validade),
                    a->bolsas[i].tipo == p.receptor ? "" : "  [tipo compativel]");
         if (obtidas == p.quantidade) printf("   status: ATENDIDO\n");
-        else if (obtidas > 0) printf("   status: PARCIAL (%d de %d) - acionar outro hemocentro\n", obtidas, p.quantidade);
-        else printf("   status: NAO ATENDIDO\n");
+        else printf("   status: NAO ATENDIDO (%d compativel(is) para %d) - pedido fica pendente\n",
+                    a->disponiveis, p.quantidade);
         if (obtidas > 0) nAloc++;
     }
 
-    printf("\n=== 4. ROTA (Floyd-Warshall + vizinho mais proximo + cadeia fria) ===\n");
-    static Grafo grafo;
-    floydWarshall(&grafo);
-    Parada paradas[16];
+    printf("\n=== 4. ROTA DE CADA PEDIDO (vizinho mais proximo + janela + cadeia fria) ===\n");
+    int alertas = 0;
     for (int i = 0; i < nAloc; i++) {
-        paradas[i].local = alocacoes[i].pedido.hospital;
-        paradas[i].pedidoId = alocacoes[i].pedido.id;
-        paradas[i].janelaMin = alocacoes[i].pedido.janelaMin;
-        paradas[i].chegadaMin = 0;
-    }
-    int total = rotaVizinhoMaisProximo(&grafo, 0, paradas, nAloc);
-    int anterior = 0, alertas = 0;
-    for (int i = 0; i < nAloc; i++) {
-        bool noPrazo = paradas[i].chegadaMin <= paradas[i].janelaMin;
-        bool frio = paradas[i].chegadaMin <= LIMITE_CADEIA_FRIA_MIN;
+        Pedido ped = alocacoes[i].pedido;
+        int caminho[V], tam;
+        int chegada = rotaVizinhoMaisProximo(ESTRADAS, 0, ped.hospital, caminho, &tam);
+        if (chegada < 0) {
+            printf("%d. Pedido #%d em %s | SEM ROTA na malha\n", i + 1, ped.id, NOME_LOCAL[ped.hospital]);
+            alertas++;
+            continue;
+        }
+        bool noPrazo = chegada <= ped.janelaMin;
+        bool frio = chegada <= LIMITE_CADEIA_FRIA_MIN;
         printf("%d. Pedido #%d em %s | chegada %3d min | janela %3d | %s | cadeia fria %s\n",
-               i + 1, paradas[i].pedidoId, NOME_LOCAL[paradas[i].local], paradas[i].chegadaMin,
-               paradas[i].janelaMin, noPrazo ? "NO PRAZO" : "ATRASO  ",
-               frio ? "OK" : "RISCO");
+               i + 1, ped.id, NOME_LOCAL[ped.hospital], chegada, ped.janelaMin,
+               noPrazo ? "NO PRAZO" : "ATRASO  ", frio ? "OK" : "RISCO");
         printf("   trajeto: ");
-        imprimirCaminho(&grafo, anterior, paradas[i].local);
+        imprimirCaminho(caminho, tam);
         printf("\n");
         if (!noPrazo || !frio) alertas++;
-        anterior = paradas[i].local;
     }
-    printf("Retorno: ");
-    imprimirCaminho(&grafo, anterior, 0);
-    printf("\nTempo total do circuito: %d min | alertas: %d\n", total, alertas);
+    printf("Alertas: %d\n", alertas);
     if (alertas > 0)
-        printf("Obs.: vizinho mais proximo e heuristica gulosa; nao garante a janela de todos.\n");
+        printf("Obs.: vizinho mais proximo e heuristica gulosa; nao garante o menor tempo nem a janela.\n");
 
     printf("\n=== 5. RELATORIOS (ordenacao + buscas) ===\n");
     Bolsa restante[64];

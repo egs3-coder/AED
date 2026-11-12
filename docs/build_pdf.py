@@ -6,6 +6,7 @@ geração, então o PDF nunca fica dessincronizado do código entregue.
 Uso: python3 docs/build_pdf.py   (requer pygments, playwright, pypdf)
 """
 import base64
+import os
 import pathlib
 import re
 import sys
@@ -100,16 +101,25 @@ def bloco_saida(titulo_inicio, titulo_fim=None):
 TESTES = re.findall(r"\[(OK|FALHOU)\]\s+(.*)", SAIDA)
 N_OK = sum(1 for s, _ in TESTES if s == "OK")
 COMPARACOES = re.findall(r"  (\w+ Sort)\s+comparacoes:\s+(\d+)", SAIDA)
+CMP = {n: int(c) for n, c in COMPARACOES}
 
-# Floyd-Warshall em Python só para desenhar a matriz de distâncias no PDF
+N_REST = int(re.search(r"Bolsas restantes: (\d+)", SAIDA).group(1))
+N_CHAVES = len(re.findall(r"^    \[\w+ [A-Z]+[+-]\] qtd=", SAIDA.split("=== 2.")[0], re.M))
+COLISOES = int(re.search(r"colisoes no hash: (\d+)", SAIDA).group(1))
+BIN = re.search(r"Vencem ate (\S+) \(busca binaria iterativa=(\d+), recursiva=(\d+)\):\n((?:   bolsa.*\n?)*)", SAIDA)
+BIN_IDS = re.findall(r"bolsa (\d+)", BIN.group(4))
+N_COMPAT = sum(1 for _, d in TESTES if re.match(r"(CH|PFC|CRIO):", d)) + \
+    sum(1 for _, d in TESTES if "incompativel foi entregue" in d or "regra invertida" in d)
 INF = 10 ** 6
 EST = [[0, 15, 25, 40, INF, INF], [15, 0, 12, INF, 30, INF], [25, 12, 0, 18, 22, INF],
        [40, INF, 18, 0, INF, 20], [INF, 30, 22, INF, 0, 16], [INF, INF, INF, 20, 16, 0]]
-DIST = [r[:] for r in EST]
-for k in range(6):
-    for i in range(6):
-        for j in range(6):
-            DIST[i][j] = min(DIST[i][j], DIST[i][k] + DIST[k][j])
+NOMES_LONGOS = ["Hemocentro Central", "Hospital Alfa", "Hospital Beta", "Hospital Gama", "Hospital Delta", "Hospital Epsilon"]
+# estradas usadas pelas rotas do cenário (lidas das linhas "trajeto:" da saída real)
+ROTA_USADA = set()
+for t in re.findall(r"trajeto: (.*)", SAIDA):
+    vs = [NOMES_LONGOS.index(n.strip()) for n in t.split("->")]
+    for a, b in zip(vs, vs[1:]):
+        ROTA_USADA.add((a, b))
 LOCAIS = ["Hemocentro", "Alfa", "Beta", "Gama", "Delta", "Epsilon"]
 TIPOS = ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"]
 
@@ -145,7 +155,7 @@ def grafo_svg():
     pos = {0: (70, 165), 1: (215, 60), 2: (250, 180), 3: (215, 300), 4: (420, 105), 5: (440, 275)}
     arestas = [(0, 1, 15), (0, 2, 25), (0, 3, 40), (1, 2, 12), (1, 4, 30), (2, 3, 18),
                (2, 4, 22), (3, 5, 20), (4, 5, 16)]
-    rota = {(0, 1), (1, 2), (2, 3), (3, 5), (5, 4), (4, 1), (1, 0)}
+    rota = ROTA_USADA
     s = ""
     for a, b, w in arestas:
         (x1, y1), (x2, y2) = pos[a], pos[b]
@@ -164,15 +174,14 @@ def grafo_svg():
     return f"<svg viewBox='20 20 480 320' class='grafo' font-family='Barlow'>{s}</svg>"
 
 
-def matriz_dist():
+def matriz_adj():
     head = "".join(f"<th>{i}</th>" for i in range(6))
     corpo = ""
     for i in range(6):
         corpo += f"<tr><th>{i} {LOCAIS[i]}</th>"
         for j in range(6):
-            v = DIST[i][j]
-            mudou = EST[i][j] != v
-            corpo += f"<td class='{'via' if mudou else ''}'>{v}</td>"
+            v = EST[i][j]
+            corpo += f"<td class='{'' if v < INF else 'via'}'>{v if v < INF else '—'}</td>"
         corpo += "</tr>"
     return f"<table class='dist'><thead><tr><th></th>{head}</tr></thead><tbody>{corpo}</tbody></table>"
 
@@ -208,7 +217,7 @@ def pagina_equipe():
         "Compatibilidade ABO/Rh — matriz", "Priorização FEFO — lista com inserção ordenada",
         "Índice de estoque — hash com encadeamento", "Índice por id — hash com sondagem linear",
         "Fila de pedidos — FIFO encadeada", "Alocação integrada — o coração do sistema",
-        "Grafo e caminhos mínimos — Floyd-Warshall", "Roteirização — vizinho mais próximo",
+        "Grafo — matriz de adjacência", "Roteirização — vizinho mais próximo",
         "Ordenação — os seis métodos do semestre", "Busca — sequencial, binária iterativa e recursiva",
         "Quadro-resumo de complexidade", "Dicionário geral de tradução C/C++ → Java",
         "Testes e evidências de execução", "Atendimento aos critérios e à regra geral",
@@ -248,7 +257,7 @@ html,body {{ margin:0; }}
        C/C++ e traduzidos, comentados, para Java.</p>
   </div>
   <div class="autoria"><b>Equipe Rota Vital</b> · Programação Orientada a Objetos e Estruturas de Dados<br>
-     Recife, outubro de 2026 · dados 100% sintéticos</div>
+     Recife, novembro de 2026 · dados 100% sintéticos</div>
   <svg class="blob" viewBox="0 0 112 210">
     <path d="M30 0 H112 V210 H30 C10 190 18 170 26 150 C34 128 10 118 12 96 C14 74 34 64 30 42 C27 24 14 14 30 0 Z" fill="#1A1A1A"/>
     <g font-family="Barlow Condensed" font-weight="800" font-style="italic" fill="#FDF6EC" opacity=".08" font-size="40">
@@ -411,24 +420,28 @@ hemocentro de processamento → estoque → hospitais.</p>
  <div class="passo dark"><b>1 · Fila FIFO</b><span>Requisições hospitalares entram na ordem de chegada.</span></div><div class="seta">→</div>
  <div class="passo"><b>2 · Matriz ABO/Rh</b><span>8 consultas O(1) dizem quais tipos doadores servem.</span></div><div class="seta">→</div>
  <div class="passo"><b>3 · Hash</b><span>(componente, tipo) leva direto à lista daquela combinação.</span></div><div class="seta">→</div>
- <div class="passo"><b>4 · FEFO</b><span>Descarta vencidas e retira a bolsa que vence primeiro.</span></div><div class="seta">→</div>
- <div class="passo"><b>5 · Floyd-Warshall</b><span>Menor tempo entre todos os pares de pontos.</span></div><div class="seta">→</div>
- <div class="passo dark"><b>6 · Vizinho + próximo</b><span>Ordem de visita, janela de tempo e cadeia fria.</span></div>
+ <div class="passo"><b>4 · FEFO</b><span>Descarta vencidas e retira a compatível que vence primeiro (tudo ou nada).</span></div><div class="seta">→</div>
+ <div class="passo"><b>5 · Grafo</b><span>Matriz de adjacência com o tempo de cada estrada.</span></div><div class="seta">→</div>
+ <div class="passo dark"><b>6 · Vizinho + próximo</b><span>Rota de cada pedido, janela de tempo e cadeia fria.</span></div>
 </div>
 <div class="cols3">
- <div class="card"><h4>🩸 Componente certo</h4>Matriz de compatibilidade (hemácias/plaquetas e plasma com regra invertida)
+ <div class="card"><h4>🩸 Componente certo</h4>Matriz de compatibilidade (hemácias/plaquetas e plasma/crioprecipitado com regra invertida)
  + descarte automático de vencidas antes de qualquer alocação.</div>
  <div class="card"><h4>⏱ Tempo certo</h4>FEFO faz a bolsa mais próxima do vencimento sair primeiro; a rota verifica a
  janela de cada hospital e emite alerta quando ela é violada.</div>
  <div class="card"><h4>❄ Temperatura certa</h4>Limite simulado de 120 min de caixa térmica; cada parada é marcada como
  "cadeia fria OK" ou "RISCO".</div>
 </div>
+<div class="aviso" style="margin:3mm 0"><b>Mesmos algoritmos do sistema HemoTrack.</b> O HemoTrack (Spring Boot) usa, no pacote
+<code>br.com.hemotrack.algoritmo</code>, exatamente estes quatro algoritmos: a mesma matriz 8×8, a mesma chave de hash
+(<code>componente × 8 + tipo</code>, <code>% 11</code>), a mesma regra de alocação (compatível que vence primeiro, tudo ou nada) e a
+mesma rota por vizinho mais próximo. Este documento é a versão C/C++ e a tradução comentada deles.</div>
 <h2>Onde cada algoritmo da disciplina aparece</h2>
 <table class="cx"><thead><tr><th>Assunto (aula)</th><th>Estrutura no Rota Vital</th><th>Para que serve no problema</th></tr></thead><tbody>
 <tr><td>Recursão (02)</td><td>Busca binária recursiva, Quick e Merge Sort</td><td>Relatório "o que vence nos próximos 7 dias" e ordenação de relatórios.</td></tr>
 <tr><td>Listas, pilhas e filas (03)</td><td>Lista FEFO encadeada · fila FIFO de pedidos</td><td>Estoque sempre ordenado por validade · atendimento justo por ordem de chegada.</td></tr>
 <tr><td>Ponteiros (03.1)</td><td><code>NoBolsa*</code>, <code>EntradaEstoque*</code>, parâmetros de saída</td><td>Encadeamento manual em C++; vira referência em Java.</td></tr>
-<tr><td>Árvores / grafos (04–05)</td><td>Grafo de 6 vértices + Floyd-Warshall</td><td>Caminho mínimo entre hemocentro e hospitais.</td></tr>
+<tr><td>Árvores / grafos (04–05)</td><td>Grafo de 6 vértices (matriz de adjacência) + vizinho mais próximo com pilha</td><td>Rota do hemocentro até o hospital de cada pedido.</td></tr>
 <tr><td>Busca e hash (06)</td><td>Hash com encadeamento + hash com sondagem linear · busca sequencial e binária</td><td>Achar o estoque de um tipo e uma bolsa por id em O(1) médio.</td></tr>
 <tr><td>Ordenação (07–08)</td><td>Bubble, Selection, Insertion, Shell, Quick, Merge</td><td>Relatórios FEFO; comparação de custo real (contador de comparações).</td></tr>
 </tbody></table>"""))
@@ -478,10 +491,10 @@ tempo na lista FEFO, no índice por id e nos vetores de relatório, tornamos <co
 8×8 indexada por <code>[doador][receptor]</code>. Responder "posso usar esta bolsa?" vira dois acessos a um vetor, sem
 nenhum <code>if</code> encadeado de regras.</p>
 <p><b>Hemácias e plaquetas:</b> o doador não pode levar um antígeno (A, B ou D/Rh) que o receptor não tenha; O− é o doador
-universal. <b>Plasma:</b> a lógica se inverte porque o plasma leva anticorpos; AB é o doador universal e o Rh não conta.</p>
+universal. <b>Plasma e crioprecipitado:</b> a lógica se inverte porque o plasma leva anticorpos; AB é o doador universal e o Rh não conta.</p>
 <div style="display:flex; gap:5mm; margin-top:2mm">
 <div><h4>Hemácias / plaquetas</h4>{matriz_compat('const int COMPAT_HEMACIAS')}</div>
-<div><h4>Plasma (PFC)</h4>{matriz_compat('const int COMPAT_PLASMA')}</div></div>
+<div><h4>Plasma (PFC) e crio (CRIO)</h4>{matriz_compat('const int COMPAT_PLASMA')}</div></div>
 <p style="margin-top:2mm;font-size:8pt;color:#6B645B">As matrizes acima foram lidas diretamente do arquivo <code>rota_vital.cpp</code> ao gerar este PDF.
 Matriz didática: não substitui protocolo imuno-hematológico.</p>
 </div>
@@ -490,13 +503,16 @@ Matriz didática: não substitui protocolo imuno-hematológico.</p>
  ('enum Tipo { O_NEG, ... }', 'enum TipoSanguineo { O_NEG("O-"), ... }', 'Em C++ o enum já é um inteiro e serve de índice. Em Java o enum é um objeto: usamos <code>ordinal()</code> para obter o mesmo índice e o rótulo "O-" passa a morar dentro do enum (no C++ era um vetor <code>NOME_TIPO[]</code> paralelo).'),
  ('const int COMPAT[8][8]', 'private static final int[][]', '<code>const</code> global vira <code>static final</code> privado: a tabela pertence à classe e não pode ser alterada de fora.'),
  ('bool compativel(...)', 'public static boolean compativel(...)', 'Não há estado por objeto, então o método é estático (classe utilitária com construtor privado).'),
+ ('int doadoresCompativeis(..., Tipo saida[])', 'TipoSanguineo[] doadoresCompativeis(...)', 'C++ preenche um vetor de saída e devolve quantos; Java devolve o próprio array, já do tamanho certo.'),
 ])}
 </div></div>
 {lado_a_lado(cpp('bool compativel('), java('MatrizCompatibilidade.java', 'public static boolean compativel('))}
+{lado_a_lado(cpp('int doadoresCompativeis('), java('MatrizCompatibilidade.java', 'public static TipoSanguineo[] doadoresCompativeis('))}
 {complexidade([('Consultar compatibilidade', 'O(1)', 'Um <code>if</code> escolhe a matriz e um acesso <code>[doador][receptor]</code> responde. Não há laço. As matrizes têm tamanho fixo (64 inteiros), portanto o espaço também é O(1).'),
                ('Listar doadores de um receptor', 'O(T) = O(1)', 'Percorre as 8 linhas da coluna do receptor. T = 8 é constante do domínio — não cresce com o estoque.')])}
-<p style="margin-top:2mm"><span class="pill l">Testes</span>14 casos: 4 de compatibilidade e 4 de incompatibilidade para hemácias
-(incluindo O+ → O− barrado pelo Rh), 2 de contagem (receptor O− só tem 1 doador; AB+ tem 8) e 4 de plasma (AB+ → O− permitido; O+ → A+ barrado).</p>"""))
+<p style="margin-top:2mm"><span class="pill l">Testes</span>17 casos: 4 de compatibilidade e 4 de incompatibilidade para hemácias
+(incluindo O+ → O− barrado pelo Rh), 3 sobre as colunas (O− só tem 1 doador; AB+ tem 8; B+ recebe de O−, O+, B−, B+), a conferência
+das <b>64 combinações</b> contra a regra de antígenos (27 compatíveis), 4 de plasma (AB+ → O− permitido; O+ → A+ barrado) e 1 de crioprecipitado.</p>"""))
 
     # 05 FEFO
     S.append(secao(5, "Priorização FEFO — lista com inserção ordenada", "Aula 03 · listas encadeadas e ponteiros", f"""
@@ -533,26 +549,26 @@ toda. No cenário, a varredura diária descartou 1005, 1019 e 1012.</div>
     # 06 hash encadeamento
     S.append(secao(6, "Índice de estoque — hash com encadeamento", "Aula 06 · busca por espalhamento", f"""
 <p class="lead">Todo pedido pergunta "quais bolsas de <b>CH A+</b> eu tenho?". A chave é <code>componente × 8 + tipo</code>
-(24 chaves possíveis) e a função hash é <code>chave % 7</code>. Cada entrada guarda a <b>lista FEFO</b> daquela
+(4 componentes × 8 tipos = 32 chaves possíveis) e a função hash é <code>chave % 11</code>, os mesmos do HemoTrack. Cada entrada guarda a <b>lista FEFO</b> daquela
 combinação — o hash diz <i>onde</i> está e a lista já está na <i>ordem</i> certa.</p>
 <div class="cols" style="grid-template-columns: 1fr 1.15fr; align-items:start">
 <div>
 <h4>Estado real da tabela após carregar as 22 bolsas</h4>
 {diagrama_hash()}
-<p style="font-size:8pt;color:#6B645B;margin-top:1.5mm">Gerado a partir da saída do programa. Escolhemos de propósito
-um primo pequeno (7) para que as <b>8 colisões</b> fiquem visíveis; cada colisão é resolvida inserindo a nova entrada no
-início da cadeia.</p>
+<p style="font-size:8pt;color:#6B645B;margin-top:1.5mm">Gerado a partir da saída do programa. Com 11 posições (primo) e
+{N_CHAVES} chaves ocupadas há <b>{COLISOES} colisões</b>, por exemplo CH O− (chave 0) e PLQ A+ (chave 11) no slot 0. Cada colisão é
+resolvida inserindo a nova entrada no início da cadeia.</p>
 </div>
 <div>
 {notas([
- ('struct HashEstoque { EntradaEstoque* slots[7]; }', 'private final Entrada[] slots = new Entrada[TAM_HASH];', 'Java já inicializa o array com <code>null</code>, por isso <code>hashInicializar()</code> não precisa de laço; ele vira o construtor implícito.'),
+ ('struct HashEstoque { EntradaEstoque* slots[11]; }', 'private final Entrada[] slots = new Entrada[TAM_HASH];', 'Java já inicializa o array com <code>null</code>, por isso <code>hashInicializar()</code> não precisa de laço; ele vira o construtor implícito.'),
  ('hashBuscar(HashEstoque* h, int chave)', 'buscar(int chave)', 'O ponteiro <code>h</code> passa a ser o <code>this</code>. O <code>while (atual != NULL)</code> é idêntico com <code>null</code>.'),
  ('NoBolsa* fefo; int quantidade;', 'final ListaFefo fefo = new ListaFefo();', 'Em C++ a entrada guarda a cabeça e o contador soltos; em Java guarda um objeto <code>ListaFefo</code> que sabe o próprio tamanho.'),
  ('(não usamos HashMap)', '(não usamos HashMap)', 'Usar <code>java.util.HashMap</code> esconderia exatamente o que a aula 06 pede: função hash e tratamento de colisão.'),
 ])}</div></div>
 {lado_a_lado(cpp('EntradaEstoque* hashBuscar('), java('HashEstoque.java', 'public Entrada buscar('))}
 {lado_a_lado(cpp('EntradaEstoque* hashObterOuCriar('), java('HashEstoque.java', 'public Entrada obterOuCriar('))}
-{complexidade([('Buscar a lista de um tipo', 'O(1 + α)', 'Calcula <code>chave % 7</code> e percorre só a cadeia do slot. α = chaves/slots ≤ 24/7 ≈ 3,4, constante do domínio → O(1) na prática. Pior caso teórico O(chaves) se tudo colidisse no mesmo slot.'),
+{complexidade([('Buscar a lista de um tipo', 'O(1 + α)', 'Calcula <code>chave % 11</code> e percorre só a cadeia do slot. α = chaves/slots ≤ 32/11 ≈ 2,9, constante do domínio → O(1) na prática. Pior caso teórico O(chaves) se tudo colidisse no mesmo slot.'),
                ('Receber bolsa', 'O(m)', 'O(1) no hash + O(m) da inserção ordenada na lista FEFO da chave.')])}"""))
 
     # 07 sondagem
@@ -574,7 +590,7 @@ início da cadeia.</p>
 <div class="cols" style="grid-template-columns: 1fr 1.15fr; align-items:start">
 <div>
 <div class="card"><h4>Por que duas técnicas diferentes?</h4>
-<b>Encadeamento</b> no estoque: poucas chaves (24), cada uma com uma lista de tamanho variável e remoções a toda hora.<br>
+<b>Encadeamento</b> no estoque: poucas chaves (32), cada uma com uma lista de tamanho variável e remoções a toda hora.<br>
 <b>Sondagem linear</b> no índice por id: uma bolsa por chave, fator de carga baixo (22/101 ≈ 22%, abaixo dos 70%
 recomendados) e memória contígua.</div>
 <h4 style="margin-top:3mm">Remoção com marcação <code>REMOVIDO</code></h4>
@@ -611,7 +627,7 @@ e remover do início custam O(1), sem deslocar elementos como aconteceria em um 
 <div>{complexidade([('enqueue', 'O(1)', 'Liga o novo nó em <code>fim-&gt;prox</code> e move <code>fim</code>. Nenhum laço.'),
                     ('dequeue', 'O(1)', 'Lê <code>inicio</code>, avança para <code>inicio-&gt;prox</code> e zera <code>fim</code> se a fila esvaziou.')])}
 <div class="card" style="margin-top:3mm"><h4>No cenário</h4>6 pedidos entram na ordem #1 (Gama) … #6 (Alfa) e são alocados exatamente nessa ordem.
-A ordem de <b>entrega</b>, porém, quem decide é a roteirização (seção 11).</div></div>
+Cada pedido atendido recebe a sua rota na seção 11; os que não têm bolsas suficientes ficam pendentes.</div></div>
 </div>"""))
 
     # 09 alocação
@@ -621,81 +637,88 @@ se encontram: a <b>matriz</b> filtra os tipos, o <b>hash</b> leva a cada lista, 
 tipo na cabeça, e comparamos só essas cabeças.</p>
 <div class="cols" style="align-items:start">
 <div>
-<div class="card escuro"><h4>Passo a passo do pedido #4 · Hospital Beta · CH O+ ×3</h4>
-1. A matriz diz que O+ recebe hemácias de <b>O−</b> e <b>O+</b>.<br>
-2. O hash devolve as listas [CH O−] = 1022 e [CH O+] = 1004 → 1003 (as O− 1002 e 1001 já tinham ido para o pedido #2).<br>
-3. Existe tipo idêntico, então saem <b>1004</b> (20/10) e <b>1003</b> (06/11) por FEFO.<br>
-4. [CH O+] esvaziou: compara as cabeças compatíveis restantes e escolhe <b>1022 (O−)</b>, marcada como
-"tipo compatível".</div>
+<div class="card escuro"><h4>Passo a passo do pedido #1 · Hospital Gama · CH A+ ×3</h4>
+1. A coluna A+ da matriz diz que A+ recebe hemácias de <b>O−, O+, A− e A+</b>.<br>
+2. O hash devolve as quatro listas: [CH O−] 1002 → 1001 → 1022, [CH O+] 1004 → 1003 (1005 já foi descartada),
+[CH A−] 1008 e [CH A+] 1021 → 1007 → 1006. São 9 compatíveis para 3 pedidas, então o pedido pode ser atendido.<br>
+3. Três vezes compara só as cabeças e tira a que vence antes: <b>1004</b> (O+, 20/10), <b>1021</b> (A+, 21/10) e
+<b>1002</b> (O−, 22/10).</div>
 <h4 style="margin-top:3mm">Regra de prioridade e por quê</h4>
-<p style="font-size:8.6pt">Primeiro o <b>tipo idêntico</b>, depois o compatível que vence antes. Assim preservamos o O−
-(doador universal, escasso) para quem só pode receber O−, e ainda evitamos perder bolsas por vencimento.</p>
+<p style="font-size:8.6pt">É a regra da US04 do HemoTrack: entre <b>todos</b> os tipos compatíveis sai a bolsa que vence primeiro,
+o que reduz o descarte. E é <b>tudo ou nada</b>: sem bolsas suficientes, nenhuma sai e o pedido fica pendente. O custo dessa regra
+aparece no cenário: o pedido #1 gastou O+ e O− que venciam antes, e os pedidos #4 (O+ ×3) e #5 (B− ×2) ficaram
+<b>pendentes</b>. Priorizar o tipo idêntico pouparia o O−, mas deixaria vencer mais bolsas.</p>
 </div><div>
 {notas([
  ('int alocar(Estoque* e, Pedido p, int hoje, Alocacao* out)', 'Alocacao alocar(Pedido p, int hoje)', 'O estoque é injetado no construtor de <code>ServicoAlocacao</code> (o mesmo padrão de um <code>@Service</code> no Spring Boot) e o resultado volta como objeto, não por ponteiro.'),
  ('Bolsa bolsas[10]; int qtd;', 'List&lt;Bolsa&gt; bolsas', 'Lista só como recipiente do resultado; <code>qtd</code> vira <code>size()</code>.'),
- ('for (int t = 0; t &lt; N_TIPOS; t++)', 'for (TipoSanguineo t : values())', 'O for-each sobre o enum percorre os mesmos 8 tipos na mesma ordem.'),
+ ('Tipo doadores[8]; int nd = doadoresCompativeis(...)', 'TipoSanguineo[] doadores = ...', 'O vetor + contador do C++ vira um array do tamanho exato.'),
+ ('for (int i = 0; i &lt; nd; i++)', 'for (TipoSanguineo t : doadores)', 'O for-each percorre os mesmos doadores na mesma ordem.'),
+ ('if (out-&gt;disponiveis &lt; p.quantidade) return 0;', 'if (disponiveis &lt; p.getQuantidade()) return out;', 'Tudo ou nada: a checagem acontece antes de retirar qualquer bolsa.'),
 ])}
 </div></div>
 {lado_a_lado(cpp('int alocar('), java('ServicoAlocacao.java', 'public Alocacao alocar('))}
-{complexidade([('Alocar um pedido', 'O(v + q)', 'Laço fixo de T = 8 tipos com matriz O(1) e hash O(1); descarte das v vencidas; para cada uma das q bolsas compara no máximo 8 cabeças e remove em O(1). Como T é constante, O(T + v + q·T) = O(v + q). <b>Não depende do tamanho n do estoque</b> — esse é o ganho de combinar hash e FEFO.')])}"""))
+{complexidade([('Alocar um pedido', 'O(v + q)', 'Coluna da matriz (8 linhas) e no máximo 8 buscas O(1) no hash; descarte das v vencidas; para cada uma das q bolsas compara no máximo 8 cabeças e remove em O(1). Como T é constante, O(T + v + q·T) = O(v + q). <b>Não depende do tamanho n do estoque</b> — esse é o ganho de combinar hash e FEFO.')])}"""))
 
     # 10 grafo
-    S.append(secao(10, "Grafo e caminhos mínimos — Floyd-Warshall", "Aulas 04–05 · generalizações de árvores: grafos", f"""
+    S.append(secao(10, "Grafo — matriz de adjacência", "Aulas 04–05 · generalizações de árvores: grafos", f"""
 <div class="cols" style="grid-template-columns: 1fr 1.1fr; align-items:start">
 <div>
 <p>A rede tem <b>6 vértices</b> (hemocentro + 5 hospitais) e 9 estradas com tempo em minutos — escopo controlado, como pede a
-ficha. Como a rota consulta a distância entre <b>vários pares</b> de pontos, calculamos todos de uma vez com
-Floyd-Warshall e guardamos <code>prox[i][j]</code> para reconstruir o trajeto.</p>
+ficha. Guardamos o grafo como <b>matriz de adjacência</b> <code>ESTRADAS[u][v]</code>: o tempo da estrada direta, ou
+<code>INF</code> quando não há estrada. A rota (seção 11) só precisa perguntar "qual o tempo de u até v?", e a matriz responde em O(1).</p>
 {grafo_svg()}
-<p style="font-size:8pt;color:#6B645B">Em laranja, as estradas usadas pela rota calculada (seção 11).</p>
-<h4>Matriz de distâncias mínimas (min)</h4>
-{matriz_dist()}
-<p style="font-size:8pt;color:#6B645B;margin-top:1mm">Células laranja: o caminho mínimo passa por um vértice intermediário, por
-exemplo Hemocentro → Epsilon = 60 min via Gama; não existe estrada direta.</p>
+<p style="font-size:8pt;color:#6B645B">Em laranja, as estradas usadas pelas rotas do cenário (seção 11).</p>
+<h4>Matriz de adjacência (min)</h4>
+{matriz_adj()}
+<p style="font-size:8pt;color:#6B645B;margin-top:1mm">— = não há estrada direta (<code>INF</code>). A matriz é simétrica porque as estradas são de mão dupla.</p>
 </div>
 <div>
 {notas([
- ('struct Grafo { int dist[V][V]; int prox[V][V]; }', 'private final int[][] dist, prox', 'Matrizes viram atributos da classe.'),
- ('void floydWarshall(Grafo* g)', 'construtor Grafo()', 'Calcular no construtor garante que nenhum <code>Grafo</code> exista sem as distâncias prontas.'),
- ('void imprimirCaminho(...) { printf(...) }', 'String caminho(int u, int v)', 'Em Java devolvemos o texto (<code>StringBuilder</code>) em vez de imprimir, para reaproveitar numa API REST.'),
- ('const int INF = 1000000;', 'INF = 1_000_000;', 'Valor alto, mas sem estourar o <code>int</code> quando somamos dois INF.'),
+ ('const int ESTRADAS[V][V] = {...};', 'private static final int[][] ESTRADAS', 'Constante global vira constante privada da classe <code>Grafo</code>.'),
+ ('const int adj[V][V] (parâmetro da rota)', 'new Grafo() / new Grafo(int[][] adj)', 'Em C++ a rota recebe a matriz; em Java a matriz fica dentro de um objeto <code>Grafo</code>. O segundo construtor recebe outra matriz, usado nos testes (a matriz "beco").'),
+ ('adj[u][v]', 'grafo.tempo(u, v)', 'O acesso direto vira um método, que esconde como o grafo é guardado.'),
+ ('const int INF = 1000000;', 'INF = 1_000_000;', 'Valor alto que nunca é uma estrada real; a rota só segue <code>adj[u][v] &lt; INF</code>.'),
 ])}
-{complexidade([('Floyd-Warshall', 'O(V³)', 'Três <code>for</code> aninhados de V. Com V = 6: 216 relaxamentos, uma única vez. Espaço O(V²) para <code>dist</code> e <code>prox</code>.'),
-               ('Distância entre dois pontos', 'O(1)', 'Leitura de <code>dist[u][v]</code> já calculado.'),
-               ('Reconstruir trajeto', 'O(V)', 'Segue <code>prox[u][v]</code>; um caminho simples tem no máximo V vértices.')])}
+{complexidade([('Tempo da estrada u–v', 'O(1)', 'Leitura de <code>adj[u][v]</code>.'),
+               ('Espaço', 'O(V²)', 'Uma matriz V × V = 36 inteiros. Para uma malha pequena e com várias estradas, é mais simples que lista de adjacência.')])}
 </div></div>
-{lado_a_lado(cpp('void floydWarshall('), java('Grafo.java', 'public Grafo() {'))}"""))
+{lado_a_lado(cpp('const int ESTRADAS[V][V]'), java('Grafo.java', 'private static final int[][] ESTRADAS'))}"""))
 
     # 11 rota
     rota = bloco_saida("=== 4. ROTA", "=== 5.")
-    S.append(secao(11, "Roteirização — vizinho mais próximo", "Heurística gulosa · janelas de tempo · cadeia fria", f"""
+    S.append(secao(11, "Roteirização — vizinho mais próximo", "Heurística gulosa · pilha · janelas de tempo · cadeia fria", f"""
 <div class="cols" style="grid-template-columns: 1fr 1fr; align-items:start">
 <div>
-<p>Com as distâncias prontas, decidimos a <b>ordem de visita</b>: saindo do hemocentro, vamos sempre à parada
-<b>ainda não visitada mais próxima</b> da posição atual. A estrutura é a mesma do <b>Selection Sort</b> (procura o mínimo
-no restante e troca para a posição atual), o que deixa a complexidade fácil de justificar.</p>
+<p>Para cada pedido atendido, o caminhão sai do hemocentro e anda pela malha: em cada ponto vai para o <b>vizinho ainda não
+visitado com a estrada mais curta</b>, até chegar ao hospital. O caminho fica numa <b>pilha</b> (<code>caminho[]</code>). Se o
+caminhão cair num <b>beco sem saída</b> (nenhum vizinho novo), desempilha e tenta o próximo vizinho do ponto anterior.
+O vetor <code>visitado[]</code> garante que cada ponto entra na pilha uma vez só, então não há ciclo.</p>
 {notas([
- ('std::swap(paradas[pos], paradas[melhor]);', 'Parada tmp = paradas[pos]; ...', 'Java não tem <code>std::swap</code>; trocamos com uma variável temporária. Em Java se trocam <b>referências</b>; em C++ se copiam as structs.'),
- ('Parada paradas[], int k', 'Parada[] paradas', 'O array Java conhece o próprio tamanho (<code>length</code>).'),
+ ('int rota(..., int caminho[], int* tamanho)', 'Rota vizinhoMaisProximo(origem, destino)', 'Java não tem parâmetro de saída: caminho e tempo voltam juntos num objeto <code>Rota</code>.'),
+ ('return -1;  (sem ligação)', 'return null;', 'A ausência de rota vira <code>null</code>.'),
+ ('bool visitado[V]; for (...) visitado[i] = false;', 'boolean[] visitado = new boolean[n];', 'Em Java o array já nasce com <code>false</code>.'),
+ ('imprimirCaminho(caminho, tamanho)', 'rota.descricao()', 'Devolve o texto em vez de imprimir, para reaproveitar no servidor web.'),
 ])}
+{complexidade([('Rota de um pedido', 'O(V²)', 'Cada volta do <code>while</code> empilha um vértice novo ou desempilha um beco: no máximo 2V voltas. Em cada volta, o <code>for</code> varre a linha do vértice atual na matriz (V colunas). Total 2V × V.'),
+               ('Rotas do cenário', 'O(k · V²)', 'Uma rota por pedido atendido (k = 4 no cenário).')])}
 </div>
 <div>
 <h4>Resultado real no cenário</h4>
 <div class="saida" style="font-size:5.9pt">{rota}</div>
 <div class="card laranja" style="margin-top:3mm"><h4 style="color:#fff">Limitação que o próprio sistema mostra</h4>
-O Hospital Delta chega aos <b>81 min</b> com janela de <b>75</b>. O algoritmo guloso escolheu Epsilon antes de Delta
-porque estava mais perto naquele momento, sem olhar o prazo. O sistema <b>detecta e sinaliza</b> o atraso. Uma
-evolução seria priorizar por janela (ex.: visitar primeiro quem tem menor folga).</div>
-{complexidade([('Vizinho mais próximo', 'O(k²)', 'Para cada uma das k posições, varre as restantes: k + (k−1) + … + 1 = k(k+1)/2 consultas O(1) a <code>dist</code>. Com k = 6 pedidos: 21 comparações.'),
-               ('Total da roteirização', 'O(V³ + k²)', 'Floyd uma vez + ordem de visita. Não garante a rota ótima (o problema exato é o do caixeiro-viajante).')])}
-</div></div>"""))
+Até o Hospital Delta o algoritmo leva <b>81 min</b> (janela de <b>75</b>): de Alfa ele prefere Beta (12 min) à estrada direta para
+Delta (30 min), e depois segue pela estrada mais curta de cada ponto. Pela estrada Alfa → Delta seriam <b>45 min</b>. O algoritmo
+guloso olha só o próximo passo, e o sistema <b>detecta e sinaliza</b> o atraso. Um caminho mínimo exato (Dijkstra) evitaria isso,
+ao custo de uma fila de prioridade.</div>
+</div></div>
+{lado_a_lado(cpp('int rotaVizinhoMaisProximo('), java('Roteirizador.java', 'public Rota vizinhoMaisProximo('))}"""))
 
     # 12 ordenação
     linhas_cmp = ""
     maxc = max(int(c) for _, c in COMPARACOES)
     cx_ord = {"Bubble Sort": ("O(n²)", "O(n)", "Para com a flag <code>trocou</code> se uma passada não troca."),
-              "Selection Sort": ("O(n²)", "O(n²)", "O laço interno sempre vai até o fim: n(n−1)/2 = 28 com n = 8."),
+              "Selection Sort": ("O(n²)", "O(n²)", f"O laço interno sempre vai até o fim: n(n−1)/2 = {N_REST * (N_REST - 1) // 2} com n = {N_REST}."),
               "Insertion Sort": ("O(n²)", "O(n)", "O <code>while</code> para cedo: o vetor vem quase ordenado, pois é exportado de listas FEFO."),
               "Shell Sort": ("O(n²)", "O(n log n)", "Insertion Sort por gaps n/2, n/4…; no caso médio fica abaixo de n²."),
               "Quick Sort": ("O(n²)", "O(n log n)", "Lomuto com pivô = último; vetor já ordenado gera partições 0 / n−1."),
@@ -707,10 +730,10 @@ evolução seria priorizar por janela (ex.: visitar primeiro quem tem menor folg
     S.append(secao(12, "Ordenação — os seis métodos do semestre", "Aulas 07–08 · Bubble, Selection, Insertion, Shell, Quick, Merge", f"""
 <p class="lead">Os relatórios precisam do estoque restante em ordem FEFO. Implementamos os seis métodos sobre o mesmo vetor de bolsas,
 com o <b>mesmo critério</b> (<code>vemAntes</code>: validade, depois id) e um <b>contador de comparações</b> para medir o custo real.</p>
-<table class="cx"><thead><tr><th>Método</th><th>Pior caso</th><th>Melhor / médio</th><th>Comparações reais (n = 8)</th><th>Justificativa pelo código</th></tr></thead>
+<table class="cx"><thead><tr><th>Método</th><th>Pior caso</th><th>Melhor / médio</th><th>Comparações reais (n = {N_REST})</th><th>Justificativa pelo código</th></tr></thead>
 <tbody>{linhas_cmp}</tbody></table>
 <p style="margin-top:2mm;font-size:8.6pt">Leitura dos números: o vetor exportado do estoque já vem <b>em blocos ordenados</b> (cada lista FEFO), então
-Insertion (16) e Merge (15) se saem melhor e o Selection (28) não tira proveito disso, exatamente como a teoria prevê.</p>
+Insertion ({CMP['Insertion Sort']}) e Merge ({CMP['Merge Sort']}) se saem melhor e o Selection ({CMP['Selection Sort']}) não tira proveito disso, exatamente como a teoria prevê.</p>
 {lado_a_lado(cpp('void intercalar(') + "\n\n" + cpp('void mergeSort('), java('Ordenacao.java', 'private void intercalar(') + "\n\n" + java('Ordenacao.java', 'private void mergeSort('), 'C/C++ · Merge Sort', 'Java · Merge Sort')}
 {notas([
  ('Bolsa* aux = new Bolsa[n]; ... delete[] aux;', 'Bolsa[] aux = new Bolsa[...];', 'Mesmo vetor auxiliar O(n); em Java não há <code>delete[]</code>.'),
@@ -734,23 +757,23 @@ cuja validade passa do limite — esse índice <i>é</i> a quantidade. Fizemos a
  ('Bolsa arr[], int n', 'Bolsa[] arr  (arr.length)', 'O parâmetro <code>n</code> some em Java.'),
  ('int meio = inicio + (fim-inicio)/2;', 'idêntico', 'Mesma fórmula nas duas linguagens: evita estouro de <code>int</code> que <code>(inicio+fim)/2</code> poderia causar.'),
 ])}
-<div class="card" style="margin-top:2mm"><h4>Verificação cruzada</h4>No cenário, iterativa = <b>3</b> e recursiva = <b>3</b> (1017, 1020, 1009 vencem até 26/10). O teste
+<div class="card" style="margin-top:2mm"><h4>Verificação cruzada</h4>No cenário, iterativa = <b>{BIN.group(2)}</b> e recursiva = <b>{BIN.group(3)}</b> ({', '.join(BIN_IDS)} vencem até {BIN.group(1)[:5]}). O teste
 automático confere que as duas batem com uma contagem sequencial.</div></div>
 </div>"""))
 
     # 14 resumo
-    S.append(secao(14, "Quadro-resumo de complexidade", "n = estoque · m = bolsas da chave · q = pedidas · v = vencidas · V = vértices · k = paradas", f"""
+    S.append(secao(14, "Quadro-resumo de complexidade", "n = estoque · m = bolsas da chave · q = pedidas · v = vencidas · V = vértices · k = pedidos atendidos", f"""
 {complexidade([
  ('Compatibilidade ABO/Rh', 'O(1)', 'Acesso direto <code>[doador][receptor]</code> na matriz 8×8.'),
  ('Inserção FEFO', 'O(m)', 'Percorre a lista até a posição; melhor caso O(1) ao virar cabeça.'),
  ('Retirada FEFO', 'O(1)', 'Remove a cabeça.'),
  ('Descarte de vencidas', 'O(v)', 'Vencidas são prefixo da lista ordenada.'),
- ('Hash do estoque (encadeamento)', 'O(1 + α)', 'α ≤ 24/7 ≈ 3,4 → constante.'),
+ ('Hash do estoque (encadeamento)', 'O(1 + α)', 'α ≤ 32/11 ≈ 2,9 → constante.'),
  ('Índice por id (sondagem linear)', 'O(1) médio', 'Fator de carga 22%; pior caso O(TAM) com agrupamento primário.'),
  ('Fila FIFO', 'O(1)', 'Ponteiros de início e fim.'),
- ('Alocação de um pedido', 'O(v + q)', 'T = 8 constante; independe de n.'),
- ('Floyd-Warshall', 'O(V³)', 'Três laços de V; executa uma vez. Espaço O(V²).'),
- ('Vizinho mais próximo', 'O(k²)', 'k(k+1)/2 consultas à matriz de distâncias.'),
+ ('Alocação de um pedido', 'O(v + q)', 'Coluna da matriz e até 8 buscas no hash; q vezes compara até 8 cabeças. Independe de n.'),
+ ('Grafo (matriz de adjacência)', 'O(1) / O(V²)', 'Tempo de uma estrada em O(1); a matriz ocupa V² posições.'),
+ ('Vizinho mais próximo (um pedido)', 'O(V²)', 'No máx. 2V voltas (empilha ou desempilha), cada uma varre V colunas.'),
  ('Bubble / Selection / Insertion', 'O(n²)', 'Laços aninhados; Bubble e Insertion chegam a O(n) no melhor caso.'),
  ('Shell / Quick / Merge', 'O(n²) / O(n²) / O(n log n)', 'Quick e Shell são O(n log n) no caso médio; Merge sempre O(n log n) com O(n) de memória extra.'),
  ('Busca sequencial / binária', 'O(n) / O(log n)', 'Recursiva usa O(log n) de pilha.'),
@@ -769,6 +792,7 @@ recursão). Os números de comparações das ordenações e o estado do hash vê
         ('hashInicializar(&amp;h)', 'new HashEstoque()', 'A inicialização vira construtor; arrays Java já nascem com <code>null</code>/0.'),
         ('head = fefoInserir(head, b)', 'lista.inserir(b)', 'A cabeça vira atributo, e o método não precisa devolvê-la.'),
         ('bool dequeue(F* f, Pedido* saida)', 'Pedido dequeue()', 'O parâmetro de saída vira valor de retorno (ou <code>null</code>).'),
+        ('int rota(..., int caminho[], int* tamanho)', 'Rota vizinhoMaisProximo(...)', 'Vários parâmetros de saída viram um objeto de resultado.'),
         ('enum Tipo + const char* NOME[]', 'enum com toString()', 'O rótulo fica no próprio enum; o índice vem de <code>ordinal()</code>.'),
         ('Bolsa arr[], int n', 'Bolsa[] arr', 'O array conhece o próprio tamanho (<code>length</code>).'),
         ('Bolsa bolsas[10]; int qtd;', 'List&lt;Bolsa&gt;', 'Apenas como recipiente do resultado.'),
@@ -785,7 +809,7 @@ recursão). Os números de comparações das ordenações e o estado do hash vê
 <div class="cols3" style="margin-bottom:3mm">
 <div class="card escuro"><div class="stat">{N_OK}/{len(TESTES)}<small>testes passando em C++ e em Java</small></div></div>
 <div class="card escuro"><div class="stat">0<small>linhas diferentes entre as saídas (fora o cabeçalho com o nome da linguagem)</small></div></div>
-<div class="card escuro"><div class="stat">18<small>casos de compatibilidade/incompatibilidade (matriz + alocação)</small></div></div>
+<div class="card escuro"><div class="stat">{N_COMPAT}<small>casos de compatibilidade/incompatibilidade (matriz + alocação)</small></div></div>
 </div>
 <div class="cols3">{lista_testes()}</div>
 <div class="aviso" style="margin-top:2mm">Evidência da tradução: <code>diff cpp/saida_cpp.txt java/saida_java.txt</code> mostra só a primeira linha
@@ -800,7 +824,7 @@ recursão). Os números de comparações das ordenações e o estado do hash vê
 <li><b>Complexidade correta e justificada</b> pela implementação real, com números da execução (seções 04–14).</li>
 <li><b>Tradução comentada C/C++ ↔ Java:</b> bloco de cabeçalho em cada classe, comentário <code>// C++:</code> nas linhas alteradas,
 código lado a lado e tabelas de raciocínio (seções 03–15).</li>
-<li>Os quatro algoritmos centrais: roteirização (vizinho mais próximo), FEFO (inserção ordenada), hash e matriz.</li>
+<li>Os quatro algoritmos centrais: roteirização (vizinho mais próximo), FEFO (inserção ordenada), hash e matriz — os mesmos usados no HemoTrack.</li>
 </ul></div>
 <div class="card escuro"><h4>Regra geral do Projeto Integrador</h4>
 <p>"Uma entrega só em Java, sem a versão em C/C++ correspondente e sem a tradução comentada, não é aceita — mesmo que o código Java
@@ -808,7 +832,8 @@ funcione."</p><ul class="check">
 <li>Versão C/C++ completa: <code>cpp/rota_vital.cpp</code>, compilando sem avisos com <code>-Wall -Wextra</code>.</li>
 <li>Versão Java correspondente: 19 classes em <code>java/src/rotavital</code>, mais um servidor local opcional (<code>rotavital.web</code>) que só reaproveita essas classes.</li>
 <li>Tradução comentada no código e neste documento.</li>
-<li>Mesma lógica nas duas: comprovada pelos mesmos 32 testes e pela saída idêntica.</li>
+<li>Mesma lógica nas duas: comprovada pelos mesmos """ + str(len(TESTES)) + """ testes e pela saída idêntica.</li>
+<li>Mesmos algoritmos do HemoTrack (Spring Boot): matriz, hash <code>% 11</code>, alocação "compatível que vence primeiro, tudo ou nada" e vizinho mais próximo.</li>
 <li>Raciocínio exposto: decisões de estrutura, limitações (agrupamento primário, rota gulosa) e melhorias possíveis.</li>
 </ul></div></div>"""))
 
@@ -842,8 +867,8 @@ mesmos resultados do console.</p>
 <li><b>Sem integração</b> com sistemas oficiais da Hemorrede.</li>
 </ul></div>
 <h2>Próximos passos</h2>
-<p>Expor <code>ServicoAlocacao</code> e <code>Roteirizador</code> como endpoints Spring Boot; rota que priorize janelas apertadas;
-hash duplo no índice por id; testes migrados para JUnit 5.</p>
+<p>Os algoritmos já rodam no HemoTrack (Spring Boot, <code>RequisicaoService.atender</code>) com testes JUnit 5. Próximos passos:
+rota que priorize janelas apertadas; comparar o vizinho mais próximo com um caminho mínimo exato para medir a perda; hash duplo no índice por id.</p>
 </div></div>"""))
     return "\n".join(S)
 
@@ -860,7 +885,8 @@ def main():
     footer = """<div style="width:100%;font-family:Arial;font-size:7px;color:#6B645B;padding:0 18mm;display:flex;justify-content:space-between;">
 <span>ROTA VITAL · Projeto Integrador U2 · C/C++ → Java</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>"""
     with sync_playwright() as p:
-        b = p.chromium.launch()
+        # CHROME=/caminho/do/chrome usa um navegador já instalado (sem 'playwright install')
+        b = p.chromium.launch(executable_path=os.environ.get("CHROME") or None)
         pg = b.new_page()
         pg.set_content(capa, wait_until="networkidle")
         pg.pdf(path="/tmp/claude-0/capa.pdf", width="297mm", height="210mm", print_background=True)

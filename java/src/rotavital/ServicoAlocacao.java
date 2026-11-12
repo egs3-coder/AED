@@ -2,8 +2,9 @@ package rotavital;
 
 /**
  * Alocação: matriz ABO/Rh + hash + FEFO trabalhando juntos.
- * Regra: 1º tipo idêntico (FEFO); se faltar, entre os compatíveis pega a
- * bolsa que vence primeiro comparando só as CABEÇAS das listas.
+ * Regra (a mesma da US04 do HemoTrack): entre TODOS os tipos compatíveis sai
+ * primeiro a bolsa que vence primeiro, comparando só as CABEÇAS das listas.
+ * TUDO OU NADA: se não há bolsas compatíveis suficientes, nenhuma sai do estoque.
  *
  * C++:  int alocar(Estoque* e, Pedido p, int hoje, Alocacao* out)
  * Java: classe de serviço que recebe o Estoque no construtor (injeção de
@@ -19,35 +20,37 @@ public class ServicoAlocacao {
 
     public Alocacao alocar(Pedido p, int hoje) {
         Alocacao out = new Alocacao(p);
-        HashEstoque.Entrada[] candidatas = new HashEstoque.Entrada[8];   // C++: EntradaEstoque* candidatas[8]
-        int nc = 0;
-        HashEstoque.Entrada identica = null;
+        if (p.getQuantidade() < 1 || p.getQuantidade() > MAX_POR_PEDIDO) return out;
 
-        // (a) 8 consultas O(1) na matriz + 8 consultas O(1) no hash
-        for (TipoSanguineo t : TipoSanguineo.values()) {          // C++: for (int t = 0; t < N_TIPOS; t++)
-            if (!MatrizCompatibilidade.compativel(p.getComponente(), t, p.getReceptor())) continue;
+        // (a) coluna da matriz: doadores aceitos (8 consultas O(1))
+        TipoSanguineo[] doadores = MatrizCompatibilidade.doadoresCompativeis(p.getComponente(), p.getReceptor());
+
+        // (b) uma busca O(1) no hash por doador; descarta as vencidas do início
+        HashEstoque.Entrada[] listas = new HashEstoque.Entrada[doadores.length];   // C++: EntradaEstoque* listas[N_TIPOS]
+        int nl = 0;
+        int disponiveis = 0;
+        for (TipoSanguineo t : doadores) {                  // C++: for (int i = 0; i < nd; i++)
             HashEstoque.Entrada en = estoque.getPorTipo().buscar(HashEstoque.chave(p.getComponente(), t));
             if (en == null) continue;
             estoque.descartarVencidas(en, hoje);
-            candidatas[nc++] = en;
-            if (t == p.getReceptor()) identica = en;
-        }
-
-        // (b) cada bolsa: compara no máximo 8 cabeças de lista -> O(1) por bolsa
-        while (out.quantidade() < p.getQuantidade() && out.quantidade() < MAX_POR_PEDIDO) {
-            HashEstoque.Entrada escolhida = null;
-            if (identica != null && !identica.getFefo().estaVazia()) {
-                escolhida = identica;
-            } else {
-                for (int i = 0; i < nc; i++) {
-                    if (candidatas[i].getFefo().estaVazia()) continue;
-                    if (escolhida == null ||
-                        candidatas[i].getFefo().primeira().venceAntesDe(escolhida.getFefo().primeira()))
-                        escolhida = candidatas[i];
-                }
+            if (!en.getFefo().estaVazia()) {
+                listas[nl++] = en;
+                disponiveis += en.getFefo().tamanho();
             }
-            if (escolhida == null) break;
-            out.adicionar(estoque.retirar(escolhida));
+        }
+        out.setDisponiveis(disponiveis);
+        if (disponiveis < p.getQuantidade()) return out;    // tudo ou nada
+
+        // (c) q vezes: compara as cabeças (no máx. 8) e retira a que vence antes
+        while (out.quantidade() < p.getQuantidade()) {
+            HashEstoque.Entrada melhor = null;
+            for (int i = 0; i < nl; i++) {
+                if (listas[i].getFefo().estaVazia()) continue;
+                // C++: vemAntes(listas[i]->fefo->bolsa, melhor->fefo->bolsa)
+                if (melhor == null || listas[i].getFefo().primeira().venceAntesDe(melhor.getFefo().primeira()))
+                    melhor = listas[i];
+            }
+            out.adicionar(estoque.retirar(melhor));
         }
         return out;
     }

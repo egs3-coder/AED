@@ -1,35 +1,41 @@
 package rotavital;
 
 /**
- * Heurística do vizinho mais próximo + verificação de janela e cadeia fria.
+ * Rota por VIZINHO MAIS PRÓXIMO andando pela malha (a mesma rota da US05 do HemoTrack).
+ * Partindo da origem, vai sempre para o vizinho AINDA NÃO VISITADO com a estrada
+ * mais curta. Se cair num beco sem saída, volta um ponto e tenta o próximo vizinho.
+ * É guloso: olha só o próximo passo, então pode não achar o menor tempo.
  *
- * C++:  struct Parada {...};  int rotaVizinhoMaisProximo(const Grafo* g, int origem,
- *                                                      Parada paradas[], int k)
- *       std::swap(paradas[pos], paradas[melhor])
- * Java: Parada vira classe interna; o swap é feito à mão com variável
- *       temporária (troca de REFERÊNCIAS no array, não cópia de struct).
+ * C++:  int rotaVizinhoMaisProximo(const int adj[V][V], int origem, int destino,
+ *                                  int caminho[], int* tamanho)
+ *       devolve o tempo (ou -1) e preenche caminho[] + *tamanho (parâmetros de saída)
+ * Java: devolve um objeto Rota (caminho + tempo) ou null se não há ligação.
+ *       Java não tem parâmetro de saída, por isso o resultado vira objeto.
  */
 public class Roteirizador {
     public static final int LIMITE_CADEIA_FRIA_MIN = 120;   // caixa térmica (sintético)
 
-    public static class Parada {
-        final int local;
-        final int pedidoId;
-        final int janelaMin;
-        int chegadaMin;
+    /** Resultado: caminho (índices dos vértices) e tempo total. */
+    public static class Rota {
+        private final int[] caminho;
+        private final int tempoMin;
 
-        public Parada(int local, int pedidoId, int janelaMin) {
-            this.local = local;
-            this.pedidoId = pedidoId;
-            this.janelaMin = janelaMin;
+        Rota(int[] caminho, int tempoMin) {
+            this.caminho = caminho;
+            this.tempoMin = tempoMin;
         }
 
-        public int getLocal() { return local; }
-        public int getPedidoId() { return pedidoId; }
-        public int getJanelaMin() { return janelaMin; }
-        public int getChegadaMin() { return chegadaMin; }
-        public boolean noPrazo() { return chegadaMin <= janelaMin; }
-        public boolean cadeiaFriaOk() { return chegadaMin <= LIMITE_CADEIA_FRIA_MIN; }
+        public int[] getCaminho() { return caminho; }
+        public int getTempoMin() { return tempoMin; }
+        public boolean noPrazo(int janelaMin) { return tempoMin <= janelaMin; }
+        public boolean cadeiaFriaOk() { return tempoMin <= LIMITE_CADEIA_FRIA_MIN; }
+
+        /** C++: imprimirCaminho(caminho, tamanho) imprimia direto; aqui vira String. */
+        public String descricao() {
+            StringBuilder sb = new StringBuilder(Grafo.NOME_LOCAL[caminho[0]]);
+            for (int i = 1; i < caminho.length; i++) sb.append(" -> ").append(Grafo.NOME_LOCAL[caminho[i]]);
+            return sb.toString();
+        }
     }
 
     private final Grafo grafo;
@@ -37,25 +43,35 @@ public class Roteirizador {
     public Roteirizador(Grafo grafo) { this.grafo = grafo; }
 
     /**
-     * Reordena 'paradas' na ordem de visita. O(k^2): para cada posição, varre
-     * as restantes (mesma estrutura do Selection Sort). Retorna o tempo total
-     * com a volta à origem.
+     * O(V^2): cada vértice entra na pilha no máximo 1 vez (visitado[]) e cada
+     * volta do while varre uma linha da matriz (V colunas).
      */
-    public int vizinhoMaisProximo(int origem, Parada[] paradas) {
-        int atual = origem;
-        int tempo = 0;
-        for (int pos = 0; pos < paradas.length; pos++) {
-            int melhor = pos;
-            for (int i = pos + 1; i < paradas.length; i++)
-                if (grafo.dist(atual, paradas[i].local) < grafo.dist(atual, paradas[melhor].local))
-                    melhor = i;
-            Parada tmp = paradas[pos];               // C++: std::swap(paradas[pos], paradas[melhor]);
-            paradas[pos] = paradas[melhor];
-            paradas[melhor] = tmp;
-            tempo += grafo.dist(atual, paradas[pos].local);
-            paradas[pos].chegadaMin = tempo;
-            atual = paradas[pos].local;
+    public Rota vizinhoMaisProximo(int origem, int destino) {
+        int n = grafo.vertices();
+        boolean[] visitado = new boolean[n];      // Java já inicia com false (C++: laço zerando)
+        int[] pilha = new int[n];                 // C++: int caminho[] (recebido como parâmetro)
+        int topo = 0;
+        pilha[topo++] = origem;
+        visitado[origem] = true;
+        while (topo > 0) {
+            int atual = pilha[topo - 1];
+            if (atual == destino) break;
+            int vizinho = -1;
+            for (int v = 0; v < n; v++)
+                if (!visitado[v] && grafo.tempo(atual, v) < Grafo.INF &&
+                    (vizinho == -1 || grafo.tempo(atual, v) < grafo.tempo(atual, vizinho)))
+                    vizinho = v;
+            if (vizinho == -1) topo--;            // beco sem saída: volta
+            else { visitado[vizinho] = true; pilha[topo++] = vizinho; }
         }
-        return tempo + grafo.dist(atual, origem);
+        if (topo == 0) return null;               // C++: return -1;
+        int[] caminho = new int[topo];            // C++: *tamanho = topo;
+        int tempo = 0;
+        caminho[0] = pilha[0];
+        for (int i = 1; i < topo; i++) {
+            caminho[i] = pilha[i];
+            tempo += grafo.tempo(pilha[i - 1], pilha[i]);
+        }
+        return new Rota(caminho, tempo);
     }
 }

@@ -42,12 +42,30 @@ public class TestesRotaVital {
         }
         verificar(doadoresONeg == 1, "CH: receptor O- so recebe de O- (1 doador)");
         verificar(doadoresABPos == 8, "CH: receptor AB+ recebe de todos (8 doadores)");
+        TipoSanguineo[] col = MatrizCompatibilidade.doadoresCompativeis(CH, B_POS);
+        verificar(col.length == 4 && col[0] == O_NEG && col[1] == O_POS && col[2] == B_NEG && col[3] == B_POS,
+                "CH: coluna B+ da matriz = O-, O+, B-, B+");
+        // Gabarito independente: regra dos antigenos (A, B, Rh) nas 64 combinacoes
+        boolean confere = true;
+        int pares = 0;
+        for (TipoSanguineo d : TipoSanguineo.values())
+            for (TipoSanguineo r : TipoSanguineo.values()) {
+                boolean dA = d == A_NEG || d == A_POS || d == AB_NEG || d == AB_POS;
+                boolean dB = d == B_NEG || d == B_POS || d == AB_NEG || d == AB_POS;
+                boolean rA = r == A_NEG || r == A_POS || r == AB_NEG || r == AB_POS;
+                boolean rB = r == B_NEG || r == B_POS || r == AB_NEG || r == AB_POS;
+                boolean esperado = (!dA || rA) && (!dB || rB) && (d.ordinal() % 2 == 0 || r.ordinal() % 2 == 1);
+                if (esperado != compat(CH, d, r)) confere = false;
+                if (esperado) pares++;
+            }
+        verificar(confere && pares == 27, "CH: matriz confere com a regra de antigenos (64 pares, 27 compativeis)");
 
         System.out.print("-- Compatibilidade de plasma (PFC) --\n");
         verificar(compat(PFC, AB_POS, O_NEG), "PFC: AB+ doa para O- (plasma universal)");
         verificar(compat(PFC, A_NEG, O_POS), "PFC: A- doa para O+");
         verificar(!compat(PFC, O_POS, A_POS), "PFC: O+ NAO doa para A+ (anti-A)");
         verificar(!compat(PFC, B_POS, AB_NEG), "PFC: B+ NAO doa para AB- (anti-A)");
+        verificar(compat(CRIO, AB_NEG, O_POS) && !compat(CRIO, O_NEG, A_POS), "CRIO: segue a regra do plasma");
 
         System.out.print("-- Lista FEFO (insercao ordenada) --\n");
         ListaFefo lista = new ListaFefo();
@@ -74,31 +92,41 @@ public class TestesRotaVital {
                 "Hash: [CH O-] tem 2 bolsas e a cabeca e a 11 (vence antes)");
         verificar(est.getPorTipo().buscar(HashEstoque.chave(PLQ, O_POS)) == null,
                 "Hash: chave inexistente retorna NULL");
+        est.receber(new Bolsa(15, A_POS, PLQ, 400));   // chave 1*8+3 = 11
+        HashEstoque.Entrada chONeg = est.getPorTipo().buscar(HashEstoque.chave(CH, O_NEG));
+        HashEstoque.Entrada plqAPos = est.getPorTipo().buscar(HashEstoque.chave(PLQ, A_POS));
+        verificar(HashEstoque.funcaoHash(HashEstoque.chave(CH, O_NEG)) == 0
+                        && HashEstoque.funcaoHash(HashEstoque.chave(PLQ, A_POS)) == 0
+                        && chONeg != null && plqAPos != null && plqAPos.getFefo().primeira().getId() == 15,
+                "Hash: CH O- (chave 0) e PLQ A+ (chave 11) colidem no slot 0 e ambas sao achadas");
         verificar(est.buscarPorId(12) != -1, "Indice: bolsa 12 encontrada por id");
         verificar(est.buscarPorId(99) == -1, "Indice: bolsa 99 inexistente");
 
         System.out.print("-- Alocacao integrada (matriz + hash + FEFO) --\n");
         ServicoAlocacao servico = new ServicoAlocacao(est);
         Alocacao a = servico.alocar(new Pedido(1, 1, A_POS, CH, 1, 60), 292);
-        verificar(a.quantidade() == 1 && a.getBolsas().get(0).getId() == 12,
-                "Alocacao: A+ recebe primeiro o tipo identico (12)");
-        a = servico.alocar(new Pedido(2, 1, A_POS, CH, 1, 60), 292);
         verificar(a.quantidade() == 1 && a.getBolsas().get(0).getId() == 11,
-                "Alocacao: sem A+, usa O- compativel que vence antes (11)");
+                "Alocacao: A+ recebe a compativel que vence antes (O- 11, nao a A+ 12)");
+        a = servico.alocar(new Pedido(2, 1, A_POS, CH, 1, 60), 292);
+        verificar(a.quantidade() == 1 && a.getBolsas().get(0).getId() == 12,
+                "Alocacao: depois, A+ 12 (vence antes de O- 10)");
         verificar(est.buscarPorId(11) == -1, "Alocacao: bolsa alocada sai do indice por id");
-        Pedido p3 = new Pedido(3, 1, B_NEG, CH, 3, 60);
-        a = servico.alocar(p3, 292);
-        verificar(a.quantidade() == 1 && a.getBolsas().get(0).getId() == 10 && est.getDescartadas() == 1,
-                "Alocacao: B- descarta a vencida (13) e atende parcial com O- (10)");
+        a = servico.alocar(new Pedido(3, 1, B_NEG, CH, 3, 60), 292);
+        verificar(a.quantidade() == 0 && a.getDisponiveis() == 1 && est.getDescartadas() == 1
+                        && est.buscarPorId(10) != -1,
+                "Alocacao: B- descarta a vencida (13); 1 compativel para 3 pedidas -> nada sai (tudo ou nada)");
+        Pedido p3b = new Pedido(7, 1, B_NEG, CH, 1, 60);
+        a = servico.alocar(p3b, 292);
+        verificar(a.quantidade() == 1 && a.getBolsas().get(0).getId() == 10, "Alocacao: B- x1 recebe O- (10)");
         boolean todasCompat = true;
         for (Bolsa b : a.getBolsas())
-            if (!compat(b.getComponente(), b.getTipo(), p3.getReceptor())) todasCompat = false;
+            if (!compat(b.getComponente(), b.getTipo(), p3b.getReceptor())) todasCompat = false;
         verificar(todasCompat, "Alocacao: nenhuma bolsa incompativel foi entregue");
         a = servico.alocar(new Pedido(4, 1, O_NEG, PFC, 1, 60), 292);
         verificar(a.quantidade() == 1 && a.getBolsas().get(0).getTipo() == AB_POS,
                 "Alocacao: plasma O- aceita AB+ (regra invertida)");
-        a = servico.alocar(new Pedido(5, 1, AB_POS, PLQ, 1, 60), 292);
-        verificar(a.quantidade() == 0, "Alocacao: sem estoque compativel -> 0 bolsas");
+        a = servico.alocar(new Pedido(5, 1, O_NEG, PLQ, 1, 60), 292);
+        verificar(a.quantidade() == 0, "Alocacao: sem estoque compativel -> 0 bolsas (PLQ A+ nao serve para O-)");
 
         System.out.print("-- Ordenacoes e buscas --\n");
         Bolsa[] base = {
@@ -125,16 +153,26 @@ public class TestesRotaVital {
                 "Busca binaria iterativa = recursiva = contagem sequencial (5)");
         verificar(Busca.sequencialPorId(base, 7) == 6, "Busca sequencial: id 7 na posicao 6");
 
-        System.out.print("-- Grafo e rota --\n");
-        Grafo g = new Grafo();
-        verificar(g.dist(0, 5) == 60, "Floyd: Hemocentro -> Epsilon = 60 min (via Gama)");
-        verificar(g.dist(1, 3) == 30, "Floyd: Alfa -> Gama = 30 min (via Beta)");
-        Roteirizador.Parada[] pr = {
-            new Roteirizador.Parada(3, 1, 999), new Roteirizador.Parada(1, 2, 999)
-        };
-        int total = new Roteirizador(g).vizinhoMaisProximo(0, pr);
-        verificar(pr[0].getLocal() == 1 && pr[1].getLocal() == 3 && total == 85,
-                "Vizinho mais proximo: visita Alfa e depois Gama, total 85 min");
+        System.out.print("-- Grafo e rota (vizinho mais proximo) --\n");
+        Roteirizador rot = new Roteirizador(new Grafo());
+        Roteirizador.Rota r3 = rot.vizinhoMaisProximo(0, 3);
+        int[] c3 = r3.getCaminho();
+        verificar(r3.getTempoMin() == 45 && c3.length == 4 && c3[1] == 1 && c3[2] == 2 && c3[3] == 3,
+                "Vizinho: Hemocentro -> Alfa -> Beta -> Gama = 45 min");
+        Roteirizador.Rota r4 = rot.vizinhoMaisProximo(0, 4);
+        verificar(r4.getTempoMin() == 81 && r4.getCaminho().length == 6,
+                "Vizinho e guloso: ate Delta da 81 min (via Alfa direto seriam 45)");
+        int[][] beco = new int[Grafo.V][Grafo.V];
+        for (int i = 0; i < Grafo.V; i++)
+            for (int j = 0; j < Grafo.V; j++) beco[i][j] = (i == j) ? 0 : Grafo.INF;
+        beco[0][1] = beco[1][0] = 2;     // 1 e beco sem saida
+        beco[0][2] = beco[2][0] = 6;
+        beco[2][3] = beco[3][2] = 4;
+        Roteirizador rotBeco = new Roteirizador(new Grafo(beco));
+        Roteirizador.Rota rb = rotBeco.vizinhoMaisProximo(0, 3);
+        verificar(rb.getTempoMin() == 10 && rb.getCaminho().length == 3 && rb.getCaminho()[1] == 2,
+                "Vizinho: beco sem saida em 1 -> volta e vai por 2 (10 min)");
+        verificar(rotBeco.vizinhoMaisProximo(0, 4) == null, "Vizinho: destino sem ligacao -> -1");
 
         System.out.printf("Resultado: %d OK, %d falha(s)\n\n", ok, falhas);
         return falhas;

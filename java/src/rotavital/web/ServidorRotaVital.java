@@ -58,7 +58,7 @@ public class ServidorRotaVital {
     private FilaPedidos fila;
     private final List<Pedido> aguardando = new ArrayList<>();   // espelho da fila só para EXIBIR
     private final List<Alocacao> alocacoes = new ArrayList<>();
-    private final Grafo grafo = new Grafo();
+    private final Roteirizador roteirizador = new Roteirizador(new Grafo());
     private int proximoId;
 
     private void reiniciar() {
@@ -153,29 +153,24 @@ public class ServidorRotaVital {
         return Json.obj("ok", true, "descartadas", n, "total", estoque.getTotal());
     }
 
-    /** GET /api/rota : Floyd-Warshall (no Grafo) + vizinho mais próximo. */
+    /** GET /api/rota : vizinho mais próximo (Roteirizador) do hemocentro até o hospital de cada pedido. */
     private String rota() {
-        Roteirizador.Parada[] paradas = new Roteirizador.Parada[alocacoes.size()];
-        for (int i = 0; i < paradas.length; i++) {
-            Pedido ped = alocacoes.get(i).getPedido();
-            paradas[i] = new Roteirizador.Parada(ped.getHospital(), ped.getId(), ped.getJanelaMin());
-        }
-        int total = new Roteirizador(grafo).vizinhoMaisProximo(0, paradas);
         List<String> lista = new ArrayList<>();
-        int anterior = 0, alertas = 0;
-        for (int i = 0; i < paradas.length; i++) {
-            Roteirizador.Parada pa = paradas[i];
-            if (!pa.noPrazo() || !pa.cadeiaFriaOk()) alertas++;
-            lista.add(Json.obj("ordem", i + 1, "pedidoId", pa.getPedidoId(), "local", pa.getLocal(),
-                    "nome", Grafo.NOME_LOCAL[pa.getLocal()], "chegada", pa.getChegadaMin(),
-                    "janela", pa.getJanelaMin(), "noPrazo", pa.noPrazo(), "cadeiaFriaOk", pa.cadeiaFriaOk(),
-                    "trajeto", grafo.caminho(anterior, pa.getLocal()),
-                    "vertices", Json.bruto(verticesDoCaminho(anterior, pa.getLocal()))));
-            anterior = pa.getLocal();
+        int alertas = 0;
+        for (int i = 0; i < alocacoes.size(); i++) {
+            Pedido ped = alocacoes.get(i).getPedido();
+            Roteirizador.Rota r = roteirizador.vizinhoMaisProximo(0, ped.getHospital());
+            if (r == null) { alertas++; continue; }
+            boolean noPrazo = r.noPrazo(ped.getJanelaMin());
+            if (!noPrazo || !r.cadeiaFriaOk()) alertas++;
+            List<String> vs = new ArrayList<>();
+            for (int v : r.getCaminho()) vs.add(String.valueOf(v));
+            lista.add(Json.obj("ordem", i + 1, "pedidoId", ped.getId(), "local", ped.getHospital(),
+                    "nome", Grafo.NOME_LOCAL[ped.getHospital()], "chegada", r.getTempoMin(),
+                    "janela", ped.getJanelaMin(), "noPrazo", noPrazo, "cadeiaFriaOk", r.cadeiaFriaOk(),
+                    "trajeto", r.descricao(), "vertices", Json.bruto(Json.arr(vs))));
         }
-        return Json.obj("paradas", Json.bruto(Json.arr(lista)), "total", total, "alertas", alertas,
-                "retorno", grafo.caminho(anterior, 0),
-                "verticesRetorno", Json.bruto(verticesDoCaminho(anterior, 0)),
+        return Json.obj("paradas", Json.bruto(Json.arr(lista)), "alertas", alertas,
                 "limiteCadeiaFria", Roteirizador.LIMITE_CADEIA_FRIA_MIN);
     }
 
@@ -247,18 +242,9 @@ public class ServidorRotaVital {
         for (Bolsa b : a.getBolsas())
             bolsas.add(Json.obj("bolsa", Json.bruto(bolsaJson(b)),
                     "tipoCompativel", b.getTipo() != a.getPedido().getReceptor()));
-        String status = a.atendidoTotalmente() ? "ATENDIDO" : (a.quantidade() > 0 ? "PARCIAL" : "NAO ATENDIDO");
+        String status = a.atendidoTotalmente() ? "ATENDIDO" : "NAO ATENDIDO";   // tudo ou nada
         return Json.obj("pedido", Json.bruto(pedidoJson(a.getPedido())), "bolsas", Json.bruto(Json.arr(bolsas)),
-                "obtidas", a.quantidade(), "status", status);
-    }
-
-    /** Converte "Hemocentro Central -> Hospital Alfa" em [0,1] para o desenho. */
-    private String verticesDoCaminho(int u, int v) {
-        List<String> ids = new ArrayList<>();
-        for (String nome : grafo.caminho(u, v).split(" -> "))
-            for (int i = 0; i < Grafo.V; i++)
-                if (Grafo.NOME_LOCAL[i].equals(nome)) ids.add(String.valueOf(i));
-        return Json.arr(ids);
+                "obtidas", a.quantidade(), "disponiveis", a.getDisponiveis(), "status", status);
     }
 
     // ------------------------------------------------------------ HTTP

@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * ROTA VITAL - Unidade 2 - VERSÃO JAVA (POO).
  * Cenário sintético completo: estoque -> varredura de vencidas -> fila de
- * pedidos -> alocação (matriz + hash + FEFO) -> rota (Floyd + vizinho mais
+ * pedidos -> alocação (matriz + hash + FEFO) -> rota (vizinho mais
  * próximo + cadeia fria) -> relatórios (ordenações + buscas).
  *
  * C++:  tudo dentro de int main() chamando funções soltas sobre structs.
@@ -75,35 +75,34 @@ public class RotaVitalApp {
                         b.getTipo() == p.getReceptor() ? "" : "  [tipo compativel]");
             int obtidas = a.quantidade();
             if (obtidas == p.getQuantidade()) System.out.print("   status: ATENDIDO\n");
-            else if (obtidas > 0)
-                System.out.printf("   status: PARCIAL (%d de %d) - acionar outro hemocentro\n", obtidas, p.getQuantidade());
-            else System.out.print("   status: NAO ATENDIDO\n");
+            else System.out.printf("   status: NAO ATENDIDO (%d compativel(is) para %d) - pedido fica pendente\n",
+                    a.getDisponiveis(), p.getQuantidade());
             if (obtidas > 0) alocacoes.add(a);
         }
 
-        System.out.print("\n=== 4. ROTA (Floyd-Warshall + vizinho mais proximo + cadeia fria) ===\n");
-        Grafo grafo = new Grafo();
-        Roteirizador.Parada[] paradas = new Roteirizador.Parada[alocacoes.size()];
-        for (int i = 0; i < paradas.length; i++) {
+        System.out.print("\n=== 4. ROTA DE CADA PEDIDO (vizinho mais proximo + janela + cadeia fria) ===\n");
+        Roteirizador roteirizador = new Roteirizador(new Grafo());
+        int alertas = 0;
+        for (int i = 0; i < alocacoes.size(); i++) {
             Pedido ped = alocacoes.get(i).getPedido();
-            paradas[i] = new Roteirizador.Parada(ped.getHospital(), ped.getId(), ped.getJanelaMin());
-        }
-        int total = new Roteirizador(grafo).vizinhoMaisProximo(0, paradas);
-        int anterior = 0, alertas = 0;
-        for (int i = 0; i < paradas.length; i++) {
-            Roteirizador.Parada pa = paradas[i];
+            Roteirizador.Rota rota = roteirizador.vizinhoMaisProximo(0, ped.getHospital());
+            if (rota == null) {                       // C++: if (chegada < 0)
+                System.out.printf("%d. Pedido #%d em %s | SEM ROTA na malha\n", i + 1, ped.getId(),
+                        Grafo.NOME_LOCAL[ped.getHospital()]);
+                alertas++;
+                continue;
+            }
+            boolean noPrazo = rota.noPrazo(ped.getJanelaMin());
+            boolean frio = rota.cadeiaFriaOk();
             System.out.printf("%d. Pedido #%d em %s | chegada %3d min | janela %3d | %s | cadeia fria %s\n",
-                    i + 1, pa.getPedidoId(), Grafo.NOME_LOCAL[pa.getLocal()], pa.getChegadaMin(),
-                    pa.getJanelaMin(), pa.noPrazo() ? "NO PRAZO" : "ATRASO  ",
-                    pa.cadeiaFriaOk() ? "OK" : "RISCO");
-            System.out.printf("   trajeto: %s\n", grafo.caminho(anterior, pa.getLocal()));
-            if (!pa.noPrazo() || !pa.cadeiaFriaOk()) alertas++;
-            anterior = pa.getLocal();
+                    i + 1, ped.getId(), Grafo.NOME_LOCAL[ped.getHospital()], rota.getTempoMin(),
+                    ped.getJanelaMin(), noPrazo ? "NO PRAZO" : "ATRASO  ", frio ? "OK" : "RISCO");
+            System.out.printf("   trajeto: %s\n", rota.descricao());
+            if (!noPrazo || !frio) alertas++;
         }
-        System.out.printf("Retorno: %s\n", grafo.caminho(anterior, 0));
-        System.out.printf("Tempo total do circuito: %d min | alertas: %d\n", total, alertas);
+        System.out.printf("Alertas: %d\n", alertas);
         if (alertas > 0)
-            System.out.print("Obs.: vizinho mais proximo e heuristica gulosa; nao garante a janela de todos.\n");
+            System.out.print("Obs.: vizinho mais proximo e heuristica gulosa; nao garante o menor tempo nem a janela.\n");
 
         System.out.print("\n=== 5. RELATORIOS (ordenacao + buscas) ===\n");
         Bolsa[] restante = estoque.exportar();

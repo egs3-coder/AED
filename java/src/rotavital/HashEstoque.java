@@ -2,7 +2,8 @@ package rotavital;
 
 /**
  * Tabela hash com ENCADEAMENTO EXTERNO (aula 06).
- * chave = componente * 8 + tipo  ->  entrada com a lista FEFO daquela combinação.
+ * chave = componente * 8 + tipo (32 chaves: 0..31)  ->  entrada com a lista FEFO daquela combinação.
+ * h(chave) = chave % 11 (o mesmo do HemoTrack). Ex.: CH O- (0) e PLQ A+ (11) colidem no slot 0.
  *
  * C++:  struct EntradaEstoque {...}; struct HashEstoque { EntradaEstoque* slots[7]; };
  *       funções soltas hashInicializar/hashBuscar/hashObterOuCriar(HashEstoque* h, ...)
@@ -13,7 +14,7 @@ package rotavital;
  */
 public class HashEstoque {
 
-    public static final int TAM_HASH = 7;   // primo pequeno: força colisões visíveis
+    public static final int TAM_HASH = 11;  // primo (o mesmo do HemoTrack)
 
     public static class Entrada {
         final int chave;
@@ -31,9 +32,9 @@ public class HashEstoque {
     private int colisoes;
 
     public static int chave(Componente c, TipoSanguineo t) { return c.ordinal() * 8 + t.ordinal(); }
-    private static int funcaoHash(int chave) { return chave % TAM_HASH; }
+    public static int funcaoHash(int chave) { return chave % TAM_HASH; }
 
-    /** O(1 + alfa): percorre só a cadeia do slot. */
+    /** O(1 + alfa), alfa <= 32/11 ~ 2,9: percorre só a cadeia do slot. */
     public Entrada buscar(int chave) {
         Entrada atual = slots[funcaoHash(chave)];
         while (atual != null) {
