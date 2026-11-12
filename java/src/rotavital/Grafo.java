@@ -1,13 +1,13 @@
 package rotavital;
 
 /**
- * Grafo da rede (6 vértices, dados sintéticos) + Floyd-Warshall.
+ * Grafo da rede (6 vértices, dados sintéticos) como MATRIZ DE ADJACÊNCIA.
+ * ESTRADAS[u][v] = minutos da estrada direta; INF = não há estrada.
  *
- * C++:  struct Grafo { int dist[V][V]; int prox[V][V]; };  void floydWarshall(Grafo* g)
- *       void imprimirCaminho(const Grafo* g, int u, int v)  -> printf direto
- * Java: Floyd-Warshall roda no construtor; caminho() devolve uma String
- *       (StringBuilder) em vez de imprimir, para poder ser reaproveitada
- *       por uma API REST no Spring Boot.
+ * C++:  const int ESTRADAS[V][V] = {...};  (a rota recebe "const int adj[V][V]")
+ * Java: a matriz fica dentro do objeto. O construtor sem argumento usa a malha
+ *       do cenário; o outro recebe uma matriz qualquer (usado nos testes, como
+ *       a matriz "beco" do C++).
  */
 public class Grafo {
     public static final int V = 6;
@@ -27,34 +27,14 @@ public class Grafo {
         { INF, INF, INF,  20,  16,   0 },
     };
 
-    private final int[][] dist = new int[V][V];
-    private final int[][] prox = new int[V][V];
+    private final int[][] adj;
 
-    /** Floyd-Warshall: O(V^3) tempo, O(V^2) memória. */
-    public Grafo() {
-        for (int i = 0; i < V; i++)
-            for (int j = 0; j < V; j++) {
-                dist[i][j] = ESTRADAS[i][j];
-                prox[i][j] = (ESTRADAS[i][j] < INF) ? j : -1;
-            }
-        for (int k = 0; k < V; k++)
-            for (int i = 0; i < V; i++)
-                for (int j = 0; j < V; j++)
-                    if (dist[i][k] + dist[k][j] < dist[i][j]) {
-                        dist[i][j] = dist[i][k] + dist[k][j];
-                        prox[i][j] = prox[i][k];
-                    }
-    }
+    public Grafo() { this(ESTRADAS); }
 
-    public int dist(int u, int v) { return dist[u][v]; }
+    public Grafo(int[][] adj) { this.adj = adj; }
 
-    public String caminho(int u, int v) {
-        if (prox[u][v] == -1) return "(sem caminho)";
-        StringBuilder sb = new StringBuilder(NOME_LOCAL[u]);
-        while (u != v) {
-            u = prox[u][v];
-            sb.append(" -> ").append(NOME_LOCAL[u]);
-        }
-        return sb.toString();
-    }
+    /** Minutos da estrada direta u-v, ou INF. O(1). */
+    public int tempo(int u, int v) { return adj[u][v]; }
+
+    public int vertices() { return adj.length; }
 }

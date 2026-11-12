@@ -7,7 +7,7 @@
 
 ![C++](https://img.shields.io/badge/C%2B%2B-17-3A3632?style=for-the-badge&logo=cplusplus&logoColor=white)
 ![Java](https://img.shields.io/badge/Java-11%2B-F26A1B?style=for-the-badge&logo=openjdk&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-32%2F32-1A1A1A?style=for-the-badge)
+![Testes](https://img.shields.io/badge/testes-38%2F38-1A1A1A?style=for-the-badge)
 ![Dados](https://img.shields.io/badge/dados-100%25%20sint%C3%A9ticos-F2B233?style=for-the-badge)
 
 📄 **Documentação completa (PDF):** [`docs/Rota_Vital_U2.pdf`](docs/Rota_Vital_U2.pdf)
@@ -66,14 +66,24 @@ A rede de sangue precisa garantir **o componente certo** (compatível e dentro d
 
 | | Algoritmo | Estrutura | Aula | Custo |
 |---|---|---|---|---|
-| 🧬 | **Compatibilidade ABO/Rh** | Matriz 8×8 `[doador][receptor]` (hemácias/plaquetas e plasma com regra invertida) | 06 / estruturas | `O(1)` |
+| 🧬 | **Compatibilidade ABO/Rh** | Matriz 8×8 `[doador][receptor]` (hemácias/plaquetas; plasma/crio com regra invertida) | 06 / estruturas | `O(1)` |
 | 📅 | **Priorização FEFO** | Lista encadeada com inserção ordenada por validade | 03 | `O(m)` inserir · `O(1)` retirar |
-| #️⃣ | **Índice de estoque por hash** | Encadeamento por (componente, tipo) + sondagem linear por id | 06 | `O(1)` médio |
-| 🗺️ | **Roteirização** | Floyd-Warshall + vizinho mais próximo | 04–05 | `O(V³ + k²)` |
+| #️⃣ | **Índice de estoque por hash** | Encadeamento por (componente, tipo), `chave % 11` + sondagem linear por id | 06 | `O(1)` médio |
+| 🗺️ | **Roteirização** | Vizinho mais próximo andando pela malha (matriz de adjacência + pilha) | 04–05 | `O(V²)` por pedido |
 
 **Apoio:** fila FIFO de pedidos (aula 03) · Bubble, Selection, Insertion, Shell, Quick e Merge Sort (aulas 07–08) · busca sequencial e binária iterativa e recursiva (aulas 02 e 06).
 
 > 🔒 Nada de `HashMap`, `PriorityQueue`, `LinkedList` ou `Arrays.sort`: a função hash, as colisões, a inserção ordenada e as ordenações estão escritas à mão **nas duas linguagens**.
+
+> 🔗 **Mesmos algoritmos do HemoTrack.** O sistema [HemoTrack](https://github.com/egs3-coder/HemoTrack) (Spring Boot) usa estes quatro algoritmos no pacote `br.com.hemotrack.algoritmo`: a mesma matriz, a mesma chave de hash (`componente*8 + tipo`, `% 11`), a mesma regra de alocação e a mesma rota. Este repositório é a versão C/C++ e a tradução comentada deles.
+
+| Algoritmo | C/C++ (`rota_vital.cpp`) | Java aqui (`rotavital`) | Java no HemoTrack (`br.com.hemotrack.algoritmo`) |
+|---|---|---|---|
+| Matriz ABO/Rh | `compativel`, `doadoresCompativeis` | `MatrizCompatibilidade` | `MatrizCompatibilidade` |
+| FEFO | `fefoInserir`, `fefoRemoverPrimeiro` | `ListaFefo` | `ListaFefo` |
+| Hash do estoque | `hashBuscar`, `hashObterOuCriar` | `HashEstoque` | `TabelaHashEstoque` |
+| Alocação | `alocar` | `ServicoAlocacao` | `RequisicaoService.selecionarBolsas` |
+| Rota | `rotaVizinhoMaisProximo` | `Roteirizador` | `RoteirizadorVizinhoMaisProximo` |
 
 ---
 
@@ -84,19 +94,19 @@ flowchart LR
     A[📥 Fila FIFO<br>pedido] --> B[🧬 Matriz ABO/Rh<br>tipos compatíveis]
     B --> C[#️⃣ Hash<br>lista de cada tipo]
     C --> D[📅 FEFO<br>descarta vencidas<br>e retira a 1ª]
-    D --> E[🗺️ Floyd-Warshall<br>caminhos mínimos]
-    E --> F[🚚 Vizinho mais próximo<br>janela + cadeia fria]
+    D --> E[🗺️ Grafo<br>matriz de adjacência]
+    E --> F[🚚 Vizinho mais próximo<br>rota de cada pedido<br>janela + cadeia fria]
 ```
 
-**Regra de alocação:** primeiro o **tipo idêntico** (FEFO); se faltar, o **compatível que vence antes**, comparando só as cabeças das listas. Isso poupa o O− (doador universal) e reduz o descarte.
+**Regra de alocação (a mesma da US04 do HemoTrack):** entre **todos os tipos compatíveis**, sai a bolsa que **vence primeiro**, comparando só as cabeças das listas. É **tudo ou nada**: sem bolsas compatíveis suficientes, nenhuma sai do estoque e o pedido fica pendente.
 
 <details>
 <summary>📊 <b>Resultado do cenário de demonstração</b></summary>
 
 - 22 bolsas carregadas · **3 descartadas** por vencimento na varredura diária
-- 6 pedidos → **5 atendidos**, 1 parcial (B−: 1 de 2)
-- Rota de **126 min**: Alfa → Beta → Gama → Epsilon → Delta → volta
-- ⚠️ **1 alerta**: Delta chega aos 81 min com janela de 75 — o vizinho mais próximo é guloso e não olha prazos; o sistema detecta e sinaliza.
+- 6 pedidos → **4 atendidos**, 2 pendentes (O+ ×3 e B− ×2: o pedido #1 já tinha usado O+ e O− que venciam antes; com tudo ou nada, nada é reservado)
+- Rotas: Gama 45 min · Alfa 15 min · Delta 81 min · Alfa 15 min
+- ⚠️ **1 alerta**: Delta chega aos 81 min com janela de 75 — o vizinho mais próximo é guloso (pela estrada Alfa → Delta seriam 45 min); o sistema detecta e sinaliza.
 
 </details>
 
@@ -149,7 +159,7 @@ flowchart LR
 
 ## ⏱️ Complexidade
 
-<sub>n = estoque · m = bolsas da chave · q = pedidas · v = vencidas · V = vértices · k = paradas</sub>
+<sub>n = estoque · m = bolsas da chave · q = pedidas · v = vencidas · V = vértices</sub>
 
 | Operação | Custo | Justificativa pela implementação |
 |---|---|---|
@@ -157,27 +167,27 @@ flowchart LR
 | Inserção FEFO | `O(m)` | `while` até a posição; O(1) se virar cabeça |
 | Retirada FEFO | `O(1)` | Remove a cabeça |
 | Descarte de vencidas | `O(v)` | Vencidas são **prefixo** da lista ordenada |
-| Hash (encadeamento) | `O(1 + α)` | `chave % 7`; α ≤ 24/7 ≈ 3,4 (constante) |
+| Hash (encadeamento) | `O(1 + α)` | `chave % 11`; α ≤ 32/11 ≈ 2,9 (constante) |
 | Hash (sondagem linear) | `O(1)` médio | Carga 22%; pior caso com agrupamento primário |
 | Fila FIFO | `O(1)` | Ponteiros de início e fim |
-| **Alocação de um pedido** | **`O(v + q)`** | 8 tipos fixos; **não depende de n** |
-| Floyd-Warshall | `O(V³)` | 3 laços de V = 6 → 216 relaxamentos, uma vez |
-| Vizinho mais próximo | `O(k²)` | k(k+1)/2 consultas à matriz `dist` |
+| **Alocação de um pedido** | **`O(v + q)`** | Coluna da matriz + até 8 buscas no hash; q vezes compara até 8 cabeças. **Não depende de n** |
+| Grafo (matriz de adjacência) | `O(1)` / `O(V²)` | Tempo da estrada = `adj[u][v]`; a matriz ocupa V² posições |
+| Vizinho mais próximo | `O(V²)` por pedido | No máx. 2V voltas do `while` (empilha ou desempilha), cada uma varre V colunas |
 | Bubble / Selection / Insertion | `O(n²)` | Bubble e Insertion: O(n) no melhor caso |
 | Shell / Quick / Merge | `O(n²)` / `O(n²)` / `O(n log n)` | Quick e Shell O(n log n) no médio |
 | Busca sequencial / binária | `O(n)` / `O(log n)` | Recursiva usa O(log n) de pilha |
 
 <details>
-<summary>📈 <b>Comparações reais das ordenações (n = 8)</b></summary>
+<summary>📈 <b>Comparações reais das ordenações (n = 12)</b></summary>
 
 | Método | Comparações |
 |---|---|
-| Merge Sort | 15 |
-| Insertion Sort | 16 |
-| Quick Sort | 18 |
-| Shell Sort | 22 |
-| Bubble Sort | 27 |
-| Selection Sort | 28 |
+| Merge Sort | 28 |
+| Insertion Sort | 29 |
+| Shell Sort | 34 |
+| Quick Sort | 43 |
+| Bubble Sort | 51 |
+| Selection Sort | 66 |
 
 O vetor exportado já vem em blocos ordenados (listas FEFO), por isso Insertion e Merge vencem e Selection não aproveita.
 
@@ -187,17 +197,17 @@ O vetor exportado já vem em blocos ordenados (listas FEFO), por isso Insertion 
 
 ## ✅ Testes
 
-**32 testes, iguais em C++ e Java, todos passando.**
+**38 testes, iguais em C++ e Java, todos passando.**
 
 | Grupo | Casos |
 |---|---|
-| 🧬 Compatibilidade de hemácias | O−→AB+ ✔ · O−→O− ✔ · A−→A+ ✔ · AB+→AB+ ✔ · O+→O− ✘ · A+→O+ ✘ · B−→A− ✘ · AB+→A+ ✘ · O− tem 1 doador · AB+ tem 8 |
-| 🧪 Compatibilidade de plasma | AB+→O− ✔ · A−→O+ ✔ · O+→A+ ✘ · B+→AB− ✘ |
+| 🧬 Compatibilidade de hemácias | O−→AB+ ✔ · O−→O− ✔ · A−→A+ ✔ · AB+→AB+ ✔ · O+→O− ✘ · A+→O+ ✘ · B−→A− ✘ · AB+→A+ ✘ · O− tem 1 doador · AB+ tem 8 · coluna B+ · **64 pares conferidos com a regra de antígenos** |
+| 🧪 Compatibilidade de plasma | AB+→O− ✔ · A−→O+ ✔ · O+→A+ ✘ · B+→AB− ✘ · crio segue o plasma |
 | 📅 FEFO | Ordem por validade com desempate por id |
-| #️⃣ Hash e índice | Chave existente / inexistente · busca e remoção por id |
-| 🔀 Alocação integrada | Tipo idêntico primeiro · compatível que vence antes · descarte de vencida · atendimento parcial · **nunca entrega incompatível** · plasma aceita AB · sem estoque → 0 |
+| #️⃣ Hash e índice | Chave existente / inexistente · colisão no slot 0 (CH O− e PLQ A+) · busca e remoção por id |
+| 🔀 Alocação integrada | Compatível que vence antes (mesmo de outro tipo) · descarte de vencida · **tudo ou nada** · **nunca entrega incompatível** · plasma aceita AB · sem estoque → 0 |
 | 📊 Ordenação e busca | 6 algoritmos dão a mesma ordem · binária iterativa = recursiva = sequencial |
-| 🗺️ Grafo | Distâncias Floyd-Warshall · ordem do vizinho mais próximo |
+| 🗺️ Rota | Vizinho até Gama (45 min) · caso guloso até Delta (81 × 45) · beco sem saída · destino sem ligação |
 
 ---
 
@@ -205,7 +215,7 @@ O vetor exportado já vem em blocos ordenados (listas FEFO), por isso Insertion 
 
 | Critério | Onde está |
 |---|---|
-| ✅ ABO/Rh via matriz com testes de compatibilidade e incompatibilidade | `compativel` / `MatrizCompatibilidade` · 18 testes |
+| ✅ ABO/Rh via matriz com testes de compatibilidade e incompatibilidade | `compativel` / `MatrizCompatibilidade` · 19 testes |
 | ✅ Integração rota + validade + compatibilidade + hash em Java | `RotaVitalApp` → `ServicoAlocacao` → `Roteirizador` |
 | ✅ Complexidade correta e justificada | Tabela acima + PDF (seções 04–14) |
 | ✅ Tradução comentada C/C++ ↔ Java | Cabeçalhos e `// C++:` em cada classe + PDF lado a lado |
@@ -215,7 +225,8 @@ O vetor exportado já vem em blocos ordenados (listas FEFO), por isso Insertion 
 > ✔️ Versão C/C++ completa (`cpp/rota_vital.cpp`, sem avisos com `-Wall -Wextra`)
 > ✔️ Versão Java correspondente (19 classes) + servidor local opcional que só reaproveita essas classes
 > ✔️ Tradução comentada no código e no PDF
-> ✔️ Mesma lógica comprovada: mesmos 32 testes e saída idêntica
+> ✔️ Mesma lógica comprovada: mesmos 38 testes e saída idêntica
+> ✔️ Mesmos algoritmos do HemoTrack (Spring Boot)
 
 ---
 
@@ -249,12 +260,12 @@ Java (web)      ServidorRotaVital  → OS MESMOS objetos      → JSON → naveg
 | 3 · Varredura de vencidas | `Estoque.descartarTodasVencidas` | `POST /api/vencidas` |
 | 3 · Consultar bolsa por id | `IndicePorId` (sondagem linear) | `GET /api/bolsa?id=1008` |
 | 4 · Alocações | resultado de `ServicoAlocacao` | `GET /api/estado` |
-| 5 · Rota de entrega | `Grafo` (Floyd-Warshall) + `Roteirizador` | `GET /api/rota` |
+| 5 · Rota de entrega | `Grafo` (matriz de adjacência) + `Roteirizador` (vizinho mais próximo) | `GET /api/rota` |
 | 6 · Estoque (hash) | `HashEstoque` + `ListaFefo` | `GET /api/estado` |
 | 7 · Compatibilidade | `MatrizCompatibilidade` | `GET /api/compat?componente=CH` |
 | 8 · Relatório | `Ordenacao` (6 métodos) + `Busca` | `GET /api/relatorio` |
 
-**Para reproduzir o cenário do console:** clique em *Carregar 6 pedidos de exemplo* → *Varredura de vencidas* → *Processar fila*. O resultado é a rota de 126 min com 1 alerta (Hospital Delta), igual à `saida_java.txt`.
+**Para reproduzir o cenário do console:** clique em *Carregar 6 pedidos de exemplo* → *Varredura de vencidas* → *Processar fila*. O resultado são 4 pedidos atendidos, 2 pendentes e 1 alerta de rota (Hospital Delta, 81 min), igual à `saida_java.txt`.
 
 </details>
 
@@ -306,7 +317,7 @@ rota_vital/
 │       ├── FilaPedidos · ServicoAlocacao · Alocacao · Pedido
 │       ├── Ordenacao · Busca
 │       ├── Bolsa · TipoSanguineo · Componente · Datas
-│       ├── TestesRotaVital         ✅ 32 testes
+│       ├── TestesRotaVital         ✅ 38 testes
 │       ├── RotaVitalApp            ▶️ main (console)
 │       └── web/                    🌐 servidor local (sem algoritmos)
 │           ├── ServidorRotaVital   main do localhost + endpoints
@@ -327,4 +338,5 @@ rota_vital/
 - 🩺 **Matriz ABO/Rh didática** — não substitui protocolo clínico
 - 🌡️ **Telemetria simulada** — cadeia fria é um limite fixo de 120 min
 - 🕸️ **Grafo limitado** — 6 vértices e 9 arestas
+- 🚚 **Rota gulosa** — o vizinho mais próximo não garante o menor tempo (caso de Delta)
 - 🚫 **Sem integração** com sistemas oficiais da Hemorrede

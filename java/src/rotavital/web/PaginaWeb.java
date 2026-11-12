@@ -95,7 +95,7 @@ final class PaginaWeb {
       <div class="full"><label for="hospital">Hospital</label><select id="hospital" name="hospital"></select></div>
       <div><label for="componente">Componente</label>
         <select id="componente" name="componente">
-          <option value="CH">CH · hemácias</option><option value="PFC">PFC · plasma</option><option value="PLQ">PLQ · plaquetas</option>
+          <option value="CH">CH · hemácias</option><option value="PLQ">PLQ · plaquetas</option><option value="PFC">PFC · plasma</option><option value="CRIO">CRIO · crioprecipitado</option>
         </select></div>
       <div><label for="receptor">Tipo do paciente</label><select id="receptor" name="receptor"></select></div>
       <div><label for="quantidade">Quantidade</label><input id="quantidade" name="quantidade" type="number" min="1" max="10" value="1"></div>
@@ -131,20 +131,20 @@ final class PaginaWeb {
 
   <section class="card c7">
     <h2><span class="n">4</span>Alocações</h2>
-    <p class="dica">Matriz ABO/Rh filtra os tipos → hash leva à lista → FEFO entrega a que vence primeiro (tipo idêntico antes do compatível).</p>
+    <p class="dica">Matriz ABO/Rh filtra os tipos → hash leva à lista → FEFO entrega a que vence primeiro entre todos os tipos compatíveis; se faltar bolsa, nada é reservado (tudo ou nada).</p>
     <div id="alocacoes"></div>
   </section>
 
   <section class="card c5">
     <h2><span class="n">5</span>Rota de entrega</h2>
-    <p class="dica">Floyd-Warshall (caminhos mínimos) + vizinho mais próximo. Confere janela e cadeia fria.</p>
+    <p class="dica">Vizinho mais próximo andando pela malha, do hemocentro até o hospital de cada pedido (volta no beco sem saída). Confere janela e cadeia fria.</p>
     <svg id="mapa" viewBox="20 20 480 320" style="width:100%;max-height:300px"></svg>
     <div id="rota"></div>
   </section>
 
   <section class="card c7">
     <h2><span class="n">6</span>Estoque · hash por componente + tipo</h2>
-    <p class="dica">Tabela de <span id="tamHash">7</span> posições com <b>encadeamento</b>; cada entrada guarda uma lista FEFO (ids na ordem de saída).</p>
+    <p class="dica">Tabela de <span id="tamHash">11</span> posições com <b>encadeamento</b>; cada entrada guarda uma lista FEFO (ids na ordem de saída).</p>
     <div id="estoque"></div>
   </section>
 
@@ -152,7 +152,7 @@ final class PaginaWeb {
     <h2><span class="n">7</span>Compatibilidade ABO/Rh</h2>
     <p class="dica">Matriz <code>[doador][receptor]</code>. A coluna destacada mostra quem pode doar para o tipo escolhido.</p>
     <div class="form" style="margin-bottom:10px">
-      <div><label for="cComp">Componente</label><select id="cComp"><option value="CH">CH · hemácias</option><option value="PFC">PFC · plasma</option><option value="PLQ">PLQ · plaquetas</option></select></div>
+      <div><label for="cComp">Componente</label><select id="cComp"><option value="CH">CH · hemácias</option><option value="PLQ">PLQ · plaquetas</option><option value="PFC">PFC · plasma</option><option value="CRIO">CRIO · crioprecipitado</option></select></div>
       <div><label for="cRec">Receptor</label><select id="cRec"></select></div>
     </div>
     <div id="compat"></div>
@@ -223,11 +223,11 @@ function desenharAlocacoes() {
   if (!a.length) { $('alocacoes').innerHTML = '<div class="vazio">Nenhum pedido alocado ainda.</div>'; return; }
   $('alocacoes').innerHTML = '<table><tr><th>Pedido</th><th>Hospital</th><th>Solicitado</th><th>Bolsas entregues (FEFO)</th><th>Status</th></tr>' +
     a.map(x => {
-      const st = x.status === 'ATENDIDO' ? 'ok' : (x.status === 'PARCIAL' ? 'parcial' : 'ruim');
+      const st = x.status === 'ATENDIDO' ? 'ok' : 'ruim';
       const bolsas = x.bolsas.map(b => `<span class="tag ${b.tipoCompativel ? 'lar' : ''}" title="${b.tipoCompativel ? 'tipo compatível' : 'tipo idêntico'}">${b.bolsa.id} · ${esc(b.bolsa.tipo)} · ${b.bolsa.data}</span>`).join('');
       return `<tr><td>#${x.pedido.id}</td><td>${esc(x.pedido.hospitalNome)}</td><td>${x.pedido.componente} ${esc(x.pedido.receptor)} × ${x.pedido.quantidade}</td>
-        <td>${bolsas}</td><td><span class="tag ${st}">${x.status === 'PARCIAL' ? `PARCIAL ${x.obtidas}/${x.pedido.quantidade}` : x.status}</span></td></tr>`;
-    }).join('') + '</table><p class="dica" style="margin-top:8px"><span class="tag lar">laranja</span> = tipo compatível usado porque faltou o idêntico.</p>';
+        <td>${bolsas}</td><td><span class="tag ${st}">${x.status}</span></td></tr>`;
+    }).join('') + '</table><p class="dica" style="margin-top:8px"><span class="tag lar">laranja</span> = tipo compatível (diferente do paciente) escolhido porque vencia antes.</p>';
 }
 
 function desenharEstoque() {
@@ -244,7 +244,6 @@ async function desenharRota() {
   const usados = new Set();
   const arestas = [];
   r.paradas.forEach(p => arestas.push(p.vertices));
-  if (r.paradas.length) arestas.push(r.verticesRetorno);
   arestas.forEach(vs => { for (let i = 1; i < vs.length; i++) { const k = [vs[i-1], vs[i]].sort().join('-'); if (!usados.has(k)) { usados.add(k);
     const [x1, y1] = POS[vs[i-1]], [x2, y2] = POS[vs[i]];
     svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#F26A1B" stroke-width="4"/>`; } } });
@@ -258,14 +257,13 @@ async function desenharRota() {
   }
   $('mapa').innerHTML = svg;
   if (!r.paradas.length) { $('rota').innerHTML = '<div class="vazio">Sem pedidos alocados para entregar.</div>'; return; }
-  $('rota').innerHTML = `<div class="resumo"><span class="tag preto">circuito ${r.total} min</span>
-      <span class="tag ${r.alertas ? 'ruim' : 'ok'}">${r.alertas} alerta(s)</span><span class="tag">cadeia fria ≤ ${r.limiteCadeiaFria} min</span></div>
+  $('rota').innerHTML = `<div class="resumo"><span class="tag ${r.alertas ? 'ruim' : 'ok'}">${r.alertas} alerta(s)</span><span class="tag">cadeia fria ≤ ${r.limiteCadeiaFria} min</span></div>
     <table><tr><th>#</th><th>Destino</th><th>Chegada</th><th>Janela</th><th>Situação</th></tr>` +
     r.paradas.map(p => `<tr title="${esc(p.trajeto)}"><td>${p.ordem}</td><td>${esc(p.nome)} <span class="dica">(pedido #${p.pedidoId})</span></td>
       <td>${p.chegada} min</td><td>${p.janela} min</td>
       <td><span class="tag ${p.noPrazo ? 'ok' : 'ruim'}">${p.noPrazo ? 'no prazo' : 'atraso'}</span>
           <span class="tag ${p.cadeiaFriaOk ? 'ok' : 'ruim'}">${p.cadeiaFriaOk ? 'frio OK' : 'risco'}</span></td></tr>`).join('') +
-    `</table><p class="dica" style="margin-top:8px">Volta: ${esc(r.retorno)}. ${r.alertas ? 'O vizinho mais próximo é guloso: escolhe o destino mais perto sem olhar o prazo.' : ''}</p>`;
+    `</table><p class="dica" style="margin-top:8px">Passe o mouse na linha para ver o trajeto. ${r.alertas ? 'O vizinho mais próximo é guloso: escolhe sempre a estrada mais curta e pode não achar o menor tempo.' : ''}</p>`;
 }
 
 async function desenharCompat() {
@@ -279,7 +277,7 @@ async function desenharCompat() {
     h += `<tr><th>${esc(tipos[i].rotulo)}</th>` + linha.map((v, j) => `<td class="${v ? 's' : 'n'} ${j === col ? 'foco' : ''}">${v ? '✓' : '·'}</td>`).join('') + '</tr>';
   });
   const doadores = r.matriz.map((l, i) => l[col] ? tipos[i].rotulo : null).filter(Boolean);
-  $('compat').innerHTML = h + `</table><p class="dica" style="margin-top:8px">${esc(tipos[col].rotulo)} pode receber ${comp} de: <b>${doadores.map(esc).join(', ')}</b>${comp === 'PFC' ? ' · no plasma a regra se inverte (AB é doador universal).' : ''}</p>`;
+  $('compat').innerHTML = h + `</table><p class="dica" style="margin-top:8px">${esc(tipos[col].rotulo)} pode receber ${comp} de: <b>${doadores.map(esc).join(', ')}</b>${comp === 'PFC' || comp === 'CRIO' ? ' · no plasma e no crioprecipitado a regra se inverte (AB é doador universal).' : ''}</p>`;
 }
 
 async function desenharRelatorio() {

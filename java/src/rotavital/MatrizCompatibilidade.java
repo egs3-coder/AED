@@ -24,7 +24,7 @@ public final class MatrizCompatibilidade {
         /* doador AB+ */   { 0,  0,  0,  0,  0,  0,  0,  1 },
     };
 
-    // Plasma: lógica invertida (leva anticorpos). AB = doador universal; Rh ignorado.
+    // Plasma (e crioprecipitado): lógica invertida (leva anticorpos). AB = doador universal; Rh ignorado.
     private static final int[][] PLASMA = {
         //         receptor: O-  O+  A-  A+  B-  B+ AB- AB+
         /* doador O-  */   { 1,  1,  0,  0,  0,  0,  0,  0 },
@@ -41,7 +41,25 @@ public final class MatrizCompatibilidade {
 
     public static boolean compativel(Componente comp, TipoSanguineo doador, TipoSanguineo receptor) {
         // C++: COMPAT_PLASMA[doador][receptor]  ->  Java: PLASMA[doador.ordinal()][receptor.ordinal()]
-        if (comp == Componente.PFC) return PLASMA[doador.ordinal()][receptor.ordinal()] == 1;
+        if (comp == Componente.PFC || comp == Componente.CRIO)
+            return PLASMA[doador.ordinal()][receptor.ordinal()] == 1;
         return HEMACIAS[doador.ordinal()][receptor.ordinal()] == 1;
+    }
+
+    /**
+     * Doadores aceitos = COLUNA do receptor na matriz (8 linhas). O(8) = O(1).
+     * C++:  int doadoresCompativeis(Componente comp, Tipo receptor, Tipo saida[])
+     *       (preenche o vetor de saída e devolve quantos)
+     * Java: devolve um array já do tamanho certo (não há parâmetro de saída).
+     */
+    public static TipoSanguineo[] doadoresCompativeis(Componente comp, TipoSanguineo receptor) {
+        TipoSanguineo[] tipos = TipoSanguineo.values();
+        TipoSanguineo[] tmp = new TipoSanguineo[tipos.length];
+        int n = 0;
+        for (int doador = 0; doador < tipos.length; doador++)   // C++: for (int doador = 0; doador < N_TIPOS; doador++)
+            if (compativel(comp, tipos[doador], receptor)) tmp[n++] = tipos[doador];
+        TipoSanguineo[] saida = new TipoSanguineo[n];
+        for (int i = 0; i < n; i++) saida[i] = tmp[i];
+        return saida;
     }
 }
